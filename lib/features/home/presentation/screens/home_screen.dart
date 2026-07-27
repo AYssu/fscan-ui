@@ -24,8 +24,8 @@ class HomeScreen extends StatelessWidget {
         onDestinationSelected: _onTap,
         destinations: const [
           NavigationDestination(
-            icon: Icon(Icons.qr_code_scanner),
-            selectedIcon: Icon(Icons.qr_code_scanner_outlined),
+            icon: Icon(Icons.memory),
+            selectedIcon: Icon(Icons.memory_outlined),
             label: '扫描',
           ),
           NavigationDestination(
