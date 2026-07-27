@@ -28,10 +28,6 @@ class ConfigScreen extends StatelessWidget {
             _buildStorageCard(context),
             const SizedBox(height: 16),
 
-            // 高级设置
-            _buildAdvancedCard(context),
-            const SizedBox(height: 16),
-
             // 关于
             _buildAboutCard(context),
             const SizedBox(height: 32),
@@ -48,7 +44,6 @@ class ConfigScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Row(
           children: [
-            // 头像
             CircleAvatar(
               radius: 32,
               backgroundColor: Theme.of(context).colorScheme.primaryContainer,
@@ -62,7 +57,6 @@ class ConfigScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 16),
-            // 信息
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -73,7 +67,6 @@ class ConfigScreen extends StatelessWidget {
                 ],
               ),
             ),
-            // 状态
             FilledButton.tonal(
               onPressed: () {},
               child: const Text('已激活'),
@@ -115,7 +108,7 @@ class ConfigScreen extends StatelessWidget {
             trailing: Container(
               width: 24,
               height: 24,
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 color: Colors.blue,
                 shape: BoxShape.circle,
               ),
@@ -157,50 +150,6 @@ class ConfigScreen extends StatelessWidget {
           ListTile(
             title: const Text('缓存大小'),
             trailing: Text('12.5 MB', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-            onTap: () {},
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 高级设置卡片
-  Widget _buildAdvancedCard(BuildContext context) {
-    return Card(
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
-              children: [
-                Icon(Icons.tune, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
-                Text('高级设置', style: Theme.of(context).textTheme.titleMedium),
-              ],
-            ),
-          ),
-          ListTile(
-            title: const Text('语言'),
-            subtitle: const Text('简体中文'),
-            onTap: () {},
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          ListTile(
-            title: const Text('日志级别'),
-            subtitle: const Text('INFO'),
-            onTap: () {},
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          ListTile(
-            title: const Text('自动保存'),
-            subtitle: const Text('已开启'),
-            onTap: () {},
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          ListTile(
-            title: const Text('WebSocket'),
-            subtitle: const Text('已连接'),
-            trailing: Icon(Icons.circle, color: Colors.green, size: 12),
             onTap: () {},
           ),
         ],

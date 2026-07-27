@@ -204,6 +204,119 @@ class _MyScreenState extends State<MyScreen> {
 - 设置合适的 `appBar`、`body`、`floatingActionButton` 等
 - 使用 `SafeArea` 处理刘海屏和异形屏
 
+## UI 设计规范（扫描页面风格）
+
+### 页面布局结构
+```
+Scaffold
+├── AppBar（标题 + 操作按钮）
+└── SingleChildScrollView
+    └── Column
+        ├── Card（目标地址）
+        ├── Card（核心配置）
+        ├── Card（模块选择）
+        ├── Card（高级选项 - ExpansionTile）
+        └── 操作按钮
+```
+
+### 卡片设计规范
+- 每个功能模块使用独立的 `Card` 包裹
+- 卡片标题：Row + Icon + Text 组合
+- 卡片内容：Padding + Column 布局
+- 卡片间距：`SizedBox(height: 16)`
+
+### 常用组件选型
+
+| 场景 | 组件 | 示例 |
+|------|------|------|
+| 二选一切换 | `SegmentedButton` | 进程位数 32/64 |
+| 数值调整 | `IconButton.filledTonal` + `TextField` | 扫描层级、扫描核心 |
+| 配置项展示 | `ListTile` | 扫描层级、扫描范围 |
+| 标签选择 | `FilterChip` / `Chip` | 模块选择 |
+| 开关选项 | `SwitchListTile` | 高级选项 |
+| 展开区域 | `ExpansionTile` | 高级选项卡片 |
+| 帮助说明 | `Icons.help_outline` + AlertDialog | 各配置项说明 |
+
+### 弹窗编辑规范
+- 点击 `ListTile` 或配置区域打开编辑弹窗
+- 使用 `StatefulBuilder` 实现弹窗内状态更新
+- 数值输入：加减按钮 + 输入框
+- 保存时验证，不合法弹出 `SnackBar` 提示
+- 输入框防抖处理（`Timer` 延迟清除错误）
+
+### 数据输入规范
+- 十六进制输入：`0x` 前缀，自动转大写
+- 十进制/十六进制双向同步：输入一个，另一个自动更新
+- 地址验证：点击确定时验证，超出范围提示错误
+
+### 数值选择器（加减按钮）
+```dart
+Container(
+  decoration: BoxDecoration(
+    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+    borderRadius: BorderRadius.circular(28),
+  ),
+  child: Row(
+    children: [
+      IconButton.filledTonal(onPressed: ..., icon: Icon(Icons.remove)),
+      Expanded(child: TextField(...)),
+      IconButton.filledTonal(onPressed: ..., icon: Icon(Icons.add)),
+    ],
+  ),
+)
+```
+
+### 进程位数选择器（SegmentedButton）
+```dart
+Row(
+  children: [
+    Text('进程位数'),
+    Spacer(),
+    SegmentedButton<bool>(
+      segments: [
+        ButtonSegment(value: true, label: Text('32')),
+        ButtonSegment(value: false, label: Text('64')),
+      ],
+      selected: {is32Bit},
+      onSelectionChanged: (Set<bool> selected) {...},
+    ),
+  ],
+)
+```
+
+### 帮助图标规范
+```dart
+Widget _buildHelpIcon(String title, String content) {
+  return GestureDetector(
+    onTap: () {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(title),
+          content: Text(content),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('知道了'),
+            ),
+          ],
+        ),
+      );
+    },
+    child: Icon(Icons.help_outline, size: 16, color: ...),
+  );
+}
+```
+
+### 颜色规范
+- 类型标签颜色：Cd=蓝色, Cb=绿色, Xa=橙色
+- 主要操作：`FilledButton` / `FilledButton.icon`
+- 次要操作：`FilledButton.tonal` / `IconButton.filledTonal`
+
+### 操作按钮规范
+- 全宽按钮：`SizedBox(width: double.infinity)` + `FilledButton.icon`
+- 统一内边距：`padding: EdgeInsets.symmetric(vertical: 16)`
+
 ## 路由规范
 
 ### 推荐使用 go_router

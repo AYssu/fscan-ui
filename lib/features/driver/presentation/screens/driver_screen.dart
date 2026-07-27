@@ -1,4 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:fscan/core/config/app_config.dart';
+
+/// 进程数据模型
+class ProcessInfo {
+  final String packageName;
+  final String arch;
+  final int pid;
+
+  ProcessInfo({
+    required this.packageName,
+    required this.arch,
+    required this.pid,
+  });
+}
 
 /// 基础配置页面 - MD3 风格
 class DriverScreen extends StatefulWidget {
@@ -9,24 +24,40 @@ class DriverScreen extends StatefulWidget {
 }
 
 class _DriverScreenState extends State<DriverScreen> {
-  String packageName = '未设置';
-  String pid = '未获取';
-  int taskBlock = 100;
-  bool pidMonitor = true;
+  // 进程配置
+  ProcessInfo? selectedProcess;
+  String pidInput = '';
+  bool processMonitor = false;
+  bool restartRequired = false;
 
+  // 内存范围
   Map<String, bool> memoryRanges = {
-    'PPSSPP': false, 'Anonymous': true, 'Ashmem': false,
-    'Code_app': true, 'Stack': false, 'C_bss': true,
-    'Code_system': false, 'C_data': true, 'C_heap': false,
-    'Java': false, 'Java_heap': false, 'Other': false,
-    'Video': false, 'C_alloc': true, 'All': false, 'Bad': false,
+    'Java_heap': true,    // Jh - Java Heap
+    'C_heap': false,      // Ch - C++ Heap
+    'C_alloc': true,      // Ca - C++ Alloc
+    'C_data': true,       // Cd - C++ .data
+    'C_bss': true,        // Cb - C++ .bss
+    'PPSSPP': false,      // PS - PPSSPP
+    'Anonymous': true,    // A - Anonymous
+    'Java': false,        // J - Java
+    'Stack': false,       // S - Stack
+    'Ashmem': false,      // As - Ashmem
+    'Video': false,       // V - Video
+    'Other': false,       // O - Other
+    'Bad': false,         // B - Bad
+    'Code_app': true,     // Xa - Code app
+    'Code_exec': false,   // Xe - Code execution
+    'All': false,
   };
 
-  bool singlePointer = true;
-  int rwMethod = 0;
-  bool handleB4 = true;
-  bool pageFault = false;
-  bool readNonR = false;
+  // 模拟进程数据
+  final List<ProcessInfo> allProcesses = [
+    ProcessInfo(packageName: 'com.tencent.tmgp.sgame', arch: 'x64', pid: 12345),
+    ProcessInfo(packageName: 'com.miHoYo.Yuanshen', arch: 'x64', pid: 23456),
+    ProcessInfo(packageName: 'com.netease.g93na', arch: 'x64', pid: 34567),
+    ProcessInfo(packageName: 'com.tencent.ig', arch: 'x64', pid: 45678),
+    ProcessInfo(packageName: 'com.activision.callofduty.shooter', arch: 'arm64', pid: 56789),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +72,7 @@ class _DriverScreenState extends State<DriverScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // 进程状态
+            // 进程配置
             _buildProcessCard(),
             const SizedBox(height: 16),
 
@@ -58,7 +89,7 @@ class _DriverScreenState extends State<DriverScreen> {
     );
   }
 
-  /// 进程状态卡片
+  /// 进程配置卡片
   Widget _buildProcessCard() {
     return Card(
       child: Column(
@@ -69,34 +100,124 @@ class _DriverScreenState extends State<DriverScreen> {
               children: [
                 Icon(Icons.phone_android, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 8),
-                Text('进程状态', style: Theme.of(context).textTheme.titleMedium),
+                Text('进程配置', style: Theme.of(context).textTheme.titleMedium),
               ],
             ),
           ),
+
+          // 进程包名
           ListTile(
             title: const Text('进程包名'),
-            subtitle: Text(packageName),
-            onTap: editPackageName,
+            subtitle: Text(
+              selectedProcess?.packageName ?? '点击选择',
+              style: TextStyle(
+                color: selectedProcess != null
+                    ? null
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            trailing: Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            onTap: selectProcess,
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
+
+          // 进程PID
           ListTile(
             title: const Text('进程PID'),
-            subtitle: Text(pid),
-            onTap: editPid,
+            subtitle: Text(
+              selectedProcess != null ? '${selectedProcess!.pid}' : (pidInput.isEmpty ? '手动输入' : pidInput),
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: Icon(
+                    Icons.refresh,
+                    color: processMonitor
+                        ? Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.3)
+                        : Theme.of(context).colorScheme.primary,
+                  ),
+                  onPressed: processMonitor ? null : refreshPid,
+                ),
+                const SizedBox(width: 4),
+                SizedBox(
+                  width: 100,
+                  child: TextField(
+                    controller: TextEditingController(text: pidInput),
+                    textAlign: TextAlign.center,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: '输入PID',
+                      hintStyle: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
+                      ),
+                      border: const OutlineInputBorder(),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                      isDense: true,
+                    ),
+                    enabled: !processMonitor,
+                    onChanged: (value) {
+                      setState(() {
+                        pidInput = value;
+                        if (value.isNotEmpty) {
+                          selectedProcess = null;
+                        }
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
-          ListTile(
-            title: const Text('多线程分块'),
-            trailing: Text('$taskBlock', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-            onTap: editTaskBlock,
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
+
+          // 进程监听
           SwitchListTile(
-            title: const Text('进程监听'),
-            subtitle: Text(pidMonitor ? '开启' : '关闭'),
-            value: pidMonitor,
-            onChanged: (v) => setState(() => pidMonitor = v),
+            title: Row(
+              children: [
+                const Text('进程监听'),
+                const SizedBox(width: 4),
+                _buildHelpIcon('进程监听说明', '选中包名后，后台将开启一个线程每隔2秒获取当前选中的包名PID。\n\n'
+                    '开启后不允许自己设置PID。\n\n'
+                    '开启需要先设置包名，否则不允许开启。\n\n'
+                    '修改后需要重启生效。'),
+              ],
+            ),
+            subtitle: Text(processMonitor ? '开启' : '关闭'),
+            value: processMonitor,
+            onChanged: (v) {
+              if (v && selectedProcess == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('请先选择进程包名')),
+                );
+                return;
+              }
+              setState(() {
+                processMonitor = v;
+                restartRequired = true;
+              });
+            },
           ),
+
+          // 重启提示
+          if (restartRequired)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline, size: 16, color: Theme.of(context).colorScheme.error),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '修改后需要重启生效',
+                      style: TextStyle(color: Theme.of(context).colorScheme.onErrorContainer, fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -104,6 +225,11 @@ class _DriverScreenState extends State<DriverScreen> {
 
   /// 内存范围卡片
   Widget _buildMemoryCard() {
+    // 获取已选中的内存范围（保持原始顺序）
+    final selectedRanges = memoryRanges.entries
+        .where((e) => e.value && e.key != 'All')
+        .toList();
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -117,27 +243,55 @@ class _DriverScreenState extends State<DriverScreen> {
                 Expanded(
                   child: Text('内存范围', style: Theme.of(context).textTheme.titleMedium),
                 ),
-                Badge(
-                  label: Text('${memoryRanges.values.where((v) => v).length}'),
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                ),
+                if (selectedRanges.isNotEmpty)
+                  Badge(
+                    label: Text('${selectedRanges.length}'),
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                  ),
               ],
             ),
-            const SizedBox(height: 16),
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 4,
-                childAspectRatio: 2,
-                crossAxisSpacing: 8,
-                mainAxisSpacing: 8,
+            const SizedBox(height: 12),
+            InkWell(
+              onTap: selectMemoryRanges,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: selectedRanges.isEmpty
+                    ? Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add_circle_outline, color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 8),
+                          Text('点击选择内存范围', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+                        ],
+                      )
+                    : Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: selectedRanges.map((entry) {
+                          return Chip(
+                            avatar: CircleAvatar(
+                              backgroundColor: Theme.of(context).colorScheme.primary,
+                              radius: 10,
+                              child: Text(
+                                _getMemoryShortName(entry.key),
+                                style: const TextStyle(fontSize: 8, color: Colors.white),
+                              ),
+                            ),
+                            label: Text(_getMemoryFullName(entry.key), style: const TextStyle(fontSize: 12)),
+                            deleteIcon: const Icon(Icons.close, size: 14),
+                            onDeleted: () {
+                              setState(() => memoryRanges[entry.key] = false);
+                            },
+                          );
+                        }).toList(),
+                      ),
               ),
-              itemCount: memoryRanges.length,
-              itemBuilder: (context, index) {
-                final entry = memoryRanges.entries.elementAt(index);
-                return _buildMemoryChip(entry.key, entry.value);
-              },
             ),
           ],
         ),
@@ -145,31 +299,206 @@ class _DriverScreenState extends State<DriverScreen> {
     );
   }
 
-  /// 内存范围芯片
-  Widget _buildMemoryChip(String name, bool value) {
-    return FilterChip(
-      label: Text(name, style: const TextStyle(fontSize: 11)),
-      selected: value,
-      onSelected: (selected) {
-        setState(() {
-          if (name == 'All') {
-            memoryRanges.updateAll((key, _) => !value);
-          } else {
-            memoryRanges[name] = !value;
-            final allSelected = memoryRanges.entries
-                .where((e) => e.key != 'All')
-                .every((e) => e.value);
-            memoryRanges['All'] = allSelected;
-          }
-        });
+  /// 获取内存范围简称
+  String _getMemoryShortName(String key) {
+    switch (key) {
+      case 'Java_heap': return 'Jh';
+      case 'C_heap': return 'Ch';
+      case 'C_alloc': return 'Ca';
+      case 'C_data': return 'Cd';
+      case 'C_bss': return 'Cb';
+      case 'PPSSPP': return 'PS';
+      case 'Anonymous': return 'A';
+      case 'Java': return 'J';
+      case 'Stack': return 'S';
+      case 'Ashmem': return 'As';
+      case 'Video': return 'V';
+      case 'Other': return 'O';
+      case 'Bad': return 'B';
+      case 'Code_app': return 'Xa';
+      case 'Code_exec': return 'Xe';
+      case 'All': return 'Al';
+      default: return key.substring(0, 2);
+    }
+  }
+
+  /// 获取内存范围全称
+  String _getMemoryFullName(String key) {
+    switch (key) {
+      case 'Java_heap': return 'Java Heap';
+      case 'C_heap': return 'C++ Heap';
+      case 'C_alloc': return 'C++ Alloc';
+      case 'C_data': return 'C++ .data';
+      case 'C_bss': return 'C++ .bss';
+      case 'PPSSPP': return 'PPSSPP';
+      case 'Anonymous': return 'Anonymous';
+      case 'Java': return 'Java';
+      case 'Stack': return 'Stack';
+      case 'Ashmem': return 'Ashmem';
+      case 'Video': return 'Video';
+      case 'Other': return 'Other';
+      case 'Bad': return 'Bad';
+      case 'Code_app': return 'Code app';
+      case 'Code_exec': return 'Code execution';
+      case 'All': return 'All';
+      default: return key;
+    }
+  }
+
+  /// 选择内存范围弹窗
+  void selectMemoryRanges() {
+    Map<String, bool> tempSelected = Map.from(memoryRanges);
+    String searchText = '';
+
+    // 在打开弹窗时排序一次，本次弹窗期间保持这个顺序
+    var sortedEntries = tempSelected.entries.toList();
+    sortedEntries.sort((a, b) {
+      if (a.key == 'All') return -1;
+      if (b.key == 'All') return 1;
+      if (a.value && !b.value) return -1;
+      if (!a.value && b.value) return 1;
+      return 0;
+    });
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialog) {
+            // 搜索筛选（不重新排序）
+            var filteredEntries = sortedEntries.where((entry) {
+              return entry.key.toLowerCase().contains(searchText.toLowerCase()) ||
+                  _getMemoryFullName(entry.key).toLowerCase().contains(searchText.toLowerCase());
+            }).toList();
+
+            // 统计已选数量（不含All）
+            final selectedCount = tempSelected.entries
+                .where((e) => e.key != 'All' && e.value)
+                .length;
+
+            return AlertDialog(
+              title: Row(
+                children: [
+                  const Text('选择内存范围'),
+                  const Spacer(),
+                  Text(
+                    '$selectedCount/${tempSelected.length - 1}',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: 400,
+                child: Column(
+                  children: [
+                    // 搜索框
+                    TextField(
+                      decoration: InputDecoration(
+                        hintText: '搜索...',
+                        prefixIcon: const Icon(Icons.search, size: 20),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(28),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                        isDense: true,
+                      ),
+                      onChanged: (value) {
+                        setDialog(() => searchText = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    // 列表
+                    Expanded(
+                      child: filteredEntries.isEmpty
+                          ? Center(
+                              child: Text(
+                                '没有找到匹配项',
+                                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                              ),
+                            )
+                          : ListView.builder(
+                              itemCount: filteredEntries.length,
+                              itemBuilder: (context, index) {
+                                final entry = filteredEntries[index];
+                                return CheckboxListTile(
+                                  value: tempSelected[entry.key],
+                                  onChanged: (selected) {
+                                    setDialog(() {
+                                      if (entry.key == 'All') {
+                                        tempSelected.updateAll((key, _) => !tempSelected['All']!);
+                                      } else {
+                                        tempSelected[entry.key] = !tempSelected[entry.key]!;
+                                        final allSelected = tempSelected.entries
+                                            .where((e) => e.key != 'All')
+                                            .every((e) => e.value);
+                                        tempSelected['All'] = allSelected;
+                                      }
+                                    });
+                                  },
+                                  title: Text(
+                                    _getMemoryFullName(entry.key),
+                                    style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
+                                  ),
+                                  subtitle: Text(
+                                    _getMemoryShortName(entry.key),
+                                    style: TextStyle(
+                                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                      fontFamily: 'monospace',
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  secondary: CircleAvatar(
+                                    backgroundColor: tempSelected[entry.key] == true
+                                        ? Theme.of(context).colorScheme.primary
+                                        : Theme.of(context).colorScheme.surfaceContainerHighest,
+                                    radius: 14,
+                                    child: Text(
+                                      _getMemoryShortName(entry.key),
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: tempSelected[entry.key] == true
+                                            ? Colors.white
+                                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                                      ),
+                                    ),
+                                  ),
+                                  dense: true,
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    setState(() => memoryRanges = tempSelected);
+                    Navigator.pop(context);
+                  },
+                  child: const Text('确定'),
+                ),
+              ],
+            );
+          },
+        );
       },
-      selectedColor: Theme.of(context).colorScheme.primaryContainer,
-      showCheckmark: false,
     );
   }
 
   /// 功能设置卡片
   Widget _buildFunctionCard() {
+    final appConfig = context.watch<AppConfig>();
+    final isCustom = appConfig.rwMethod == 2;
+
     return Card(
       child: Column(
         children: [
@@ -183,144 +512,171 @@ class _DriverScreenState extends State<DriverScreen> {
               ],
             ),
           ),
-          SwitchListTile(
-            title: const Text('指针模式'),
-            subtitle: Text(singlePointer ? '单指针' : '多指针'),
-            value: singlePointer,
-            onChanged: (v) => setState(() => singlePointer = v),
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
+          // 读写方式
           ListTile(
             title: const Text('读写方式'),
-            subtitle: Text(_getRwMethodName()),
+            subtitle: Text(appConfig.getRwMethodName()),
             onTap: editRwMethod,
           ),
+
+          // 动态库地址（始终显示）
           const Divider(height: 1, indent: 16, endIndent: 16),
-          SwitchListTile(
-            title: const Text('处理B4'),
-            subtitle: Text(handleB4 ? '开启' : '关闭'),
-            value: handleB4,
-            onChanged: (v) => setState(() => handleB4 = v),
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          SwitchListTile(
-            title: const Text('缺页处理'),
-            subtitle: Text(pageFault ? '开启' : '关闭'),
-            value: pageFault,
-            onChanged: (v) => setState(() => pageFault = v),
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          SwitchListTile(
-            title: const Text('读非r段'),
-            subtitle: Text(readNonR ? '开启' : '关闭'),
-            value: readNonR,
-            onChanged: (v) => setState(() => readNonR = v),
+          ListTile(
+            title: const Text('动态库地址'),
+            subtitle: Text(
+              appConfig.libPath,
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 检测按钮
+                IconButton(
+                  icon: Icon(Icons.bug_report, color: Theme.of(context).colorScheme.primary),
+                  onPressed: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('检测功能开发中...')),
+                    );
+                  },
+                  tooltip: '检测',
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              ],
+            ),
+            onTap: editLibPath,
           ),
         ],
       ),
     );
   }
 
-  String _getRwMethodName() {
-    switch (rwMethod) {
-      case 0: return 'SYSCALL - 系统调用';
-      case 1: return 'KERNEL - 内核驱动';
-      case 2: return 'PREAD64 - /proc/pid/mem';
-      default: return '未知';
-    }
-  }
+  /// 选择进程弹窗
+  void selectProcess() {
+    String searchText = '';
+    ProcessInfo? tempSelected = selectedProcess;
 
-  void editPackageName() {
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('进程包名'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: '包名',
-            hintText: 'com.xxx.game',
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-          FilledButton(
-            onPressed: () {
-              setState(() => packageName = controller.text);
-              Navigator.pop(context);
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void editPid() {
-    final controller = TextEditingController();
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('进程PID'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            labelText: 'PID',
-            hintText: '12345',
-          ),
-          keyboardType: TextInputType.number,
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-          FilledButton(
-            onPressed: () {
-              setState(() => pid = controller.text);
-              Navigator.pop(context);
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void editTaskBlock() {
     showDialog(
       context: context,
       builder: (context) {
-        double temp = taskBlock.toDouble();
         return StatefulBuilder(
-          builder: (context, setDialog) => AlertDialog(
-            title: const Text('多线程分块'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('$taskBlock', style: Theme.of(context).textTheme.displaySmall),
-                Slider(
-                  value: temp,
-                  min: 10,
-                  max: 1000,
-                  divisions: 99,
-                  label: '$taskBlock',
-                  onChanged: (v) => setDialog(() => temp = v),
+          builder: (context, setDialog) {
+            final filteredProcesses = allProcesses.where((process) {
+              return process.packageName.toLowerCase().contains(searchText.toLowerCase());
+            }).toList();
+
+            return AlertDialog(
+              title: const Text('选择进程'),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: 400,
+                child: Column(
+                  children: [
+                    TextField(
+                      decoration: InputDecoration(
+                        hintText: '搜索进程...',
+                        prefixIcon: const Icon(Icons.search),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(28),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                      ),
+                      onChanged: (value) {
+                        setDialog(() => searchText = value);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: filteredProcesses.length,
+                        itemBuilder: (context, index) {
+                          final process = filteredProcesses[index];
+                          return RadioListTile<ProcessInfo>(
+                            value: process,
+                            groupValue: tempSelected,
+                            onChanged: (value) {
+                              setDialog(() => tempSelected = value);
+                            },
+                            title: Text(
+                              process.packageName,
+                              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                            ),
+                            subtitle: Text('${process.arch} | PID: ${process.pid}'),
+                            secondary: CircleAvatar(
+                              backgroundColor: Theme.of(context).colorScheme.primary,
+                              radius: 14,
+                              child: Text(
+                                process.arch == 'x64' ? '64' : '32',
+                                style: const TextStyle(fontSize: 10, color: Colors.white),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    setState(() {
+                      selectedProcess = tempSelected;
+                      pidInput = '';
+                      restartRequired = true;
+                    });
+                    Navigator.pop(context);
+                  },
+                  child: const Text('确定'),
                 ),
               ],
-            ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// 刷新PID
+  void refreshPid() {
+    if (selectedProcess == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请先选择进程包名')),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('正在获取 ${selectedProcess!.packageName} 的PID...')),
+    );
+  }
+
+  /// 帮助图标
+  Widget _buildHelpIcon(String title, String content) {
+    return GestureDetector(
+      onTap: () {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(title),
+            content: Text(content),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
               FilledButton(
-                onPressed: () {
-                  setState(() => taskBlock = temp.toInt());
-                  Navigator.pop(context);
-                },
-                child: const Text('确定'),
+                onPressed: () => Navigator.pop(context),
+                child: const Text('知道了'),
               ),
             ],
           ),
         );
       },
+      child: Icon(
+        Icons.help_outline,
+        size: 16,
+        color: Theme.of(context).colorScheme.primary,
+      ),
     );
   }
 
@@ -336,29 +692,29 @@ class _DriverScreenState extends State<DriverScreen> {
               title: const Text('SYSCALL'),
               subtitle: const Text('系统调用，最通用'),
               value: 0,
-              groupValue: rwMethod,
+              groupValue: context.read<AppConfig>().rwMethod,
               onChanged: (v) {
-                setState(() => rwMethod = v!);
-                Navigator.pop(context);
-              },
-            ),
-            RadioListTile<int>(
-              title: const Text('KERNEL'),
-              subtitle: const Text('加载 libmemory.so'),
-              value: 1,
-              groupValue: rwMethod,
-              onChanged: (v) {
-                setState(() => rwMethod = v!);
+                context.read<AppConfig>().setRwMethod(v!);
                 Navigator.pop(context);
               },
             ),
             RadioListTile<int>(
               title: const Text('PREAD64'),
               subtitle: const Text('/proc/pid/mem'),
-              value: 2,
-              groupValue: rwMethod,
+              value: 1,
+              groupValue: context.read<AppConfig>().rwMethod,
               onChanged: (v) {
-                setState(() => rwMethod = v!);
+                context.read<AppConfig>().setRwMethod(v!);
+                Navigator.pop(context);
+              },
+            ),
+            RadioListTile<int>(
+              title: const Text('CUSTOM'),
+              subtitle: const Text('自定义动态库'),
+              value: 2,
+              groupValue: context.read<AppConfig>().rwMethod,
+              onChanged: (v) {
+                context.read<AppConfig>().setRwMethod(v!);
                 Navigator.pop(context);
               },
             ),
@@ -371,18 +727,45 @@ class _DriverScreenState extends State<DriverScreen> {
     );
   }
 
+  void editLibPath() {
+    final appConfig = context.read<AppConfig>();
+    final controller = TextEditingController(text: appConfig.libPath);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('动态库地址'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: '/data/local/tmp/libmemory.so',
+            border: OutlineInputBorder(),
+          ),
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          FilledButton(
+            onPressed: () {
+              appConfig.setLibPath(controller.text);
+              Navigator.pop(context);
+            },
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void resetConfig() {
+    final appConfig = context.read<AppConfig>();
     setState(() {
-      packageName = '未设置';
-      pid = '未获取';
-      taskBlock = 100;
-      pidMonitor = true;
+      selectedProcess = null;
+      pidInput = '';
+      processMonitor = false;
+      restartRequired = false;
       memoryRanges.updateAll((key, _) => false);
-      singlePointer = true;
-      rwMethod = 0;
-      handleB4 = true;
-      pageFault = false;
-      readNonR = false;
+      appConfig.setRwMethod(0);
+      appConfig.setLibPath('/data/local/tmp/libmemory.so');
     });
   }
 }

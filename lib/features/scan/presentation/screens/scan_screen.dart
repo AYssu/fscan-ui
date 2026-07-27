@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:fscan/core/config/app_config.dart';
 
 /// 基址搜索页面 - MD3 风格
 class ScanScreen extends StatefulWidget {
@@ -21,6 +23,9 @@ class _ScanScreenState extends State<ScanScreen> {
   int scanCores = 8;
   bool moduleExtension = false;
   bool negativeOffset = false;
+  bool isFastMode = false; // true=快速模式, false=普通模式
+  bool readProtected = false; // 读取受限内存
+  String outputPath = '/storage/emulated/0/fscan/a1.out';
 
   // 模拟接口数据
   final List<ModuleItem> allModules = [
@@ -165,30 +170,37 @@ class _ScanScreenState extends State<ScanScreen> {
             onTap: editRange,
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
+          ListTile(
+            title: const Text('输出路径'),
+            trailing: Text(
+              outputPath.split('/').last,
+              style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 12),
+            ),
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
             child: Row(
               children: [
                 const Text('进程位数'),
                 const Spacer(),
-                SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(
-                      value: true,
-                      label: Text('32位'),
-                    ),
-                    ButtonSegment(
-                      value: false,
-                      label: Text('64位'),
-                    ),
-                  ],
-                  selected: {is32Bit},
-                  onSelectionChanged: (Set<bool> selected) {
-                    setState(() => is32Bit = selected.first);
-                  },
-                  style: ButtonStyle(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                SizedBox(
+                  width: 180,
+                  child: SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment(
+                        value: true,
+                        label: Text('32位'),
+                      ),
+                      ButtonSegment(
+                        value: false,
+                        label: Text('64位'),
+                      ),
+                    ],
+                    selected: {is32Bit},
+                    onSelectionChanged: (Set<bool> selected) {
+                      setState(() => is32Bit = selected.first);
+                    },
                   ),
                 ),
               ],
@@ -289,45 +301,199 @@ class _ScanScreenState extends State<ScanScreen> {
         leading: Icon(Icons.settings, color: Theme.of(context).colorScheme.primary),
         title: Text('高级选项', style: Theme.of(context).textTheme.titleMedium),
         children: [
-          SwitchListTile(
-            title: const Text('处理B4'),
-            subtitle: Text(handlePageFault ? '开启' : '关闭'),
-            value: handlePageFault,
-            onChanged: (v) => setState(() => handlePageFault = v),
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          SwitchListTile(
-            title: const Text('字节对齐'),
-            subtitle: Text(byteAlignment ? '开启' : '关闭'),
-            value: byteAlignment,
-            onChanged: (v) => setState(() => byteAlignment = v),
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          SwitchListTile(
-            title: const Text('分页对齐'),
-            subtitle: Text(pageAlignment ? '开启' : '关闭'),
-            value: pageAlignment,
-            onChanged: (v) => setState(() => pageAlignment = v),
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
+          // 扫描核心（最上面）
           ListTile(
             title: const Text('扫描核心'),
             trailing: Text('$scanCores 核', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
             onTap: editCores,
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
+
+          // 处理 0xb4000000
           SwitchListTile(
-            title: const Text('模块扩展'),
+            title: const Text('处理 0xb4000000'),
+            subtitle: Text(handlePageFault ? '开启' : '关闭'),
+            value: handlePageFault,
+            onChanged: (v) => setState(() => handlePageFault = v),
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16),
+
+          // 4字节对齐
+          SwitchListTile(
+            title: Row(
+              children: [
+                const Text('4字节对齐'),
+                const SizedBox(width: 4),
+                _buildHelpIcon('4字节对齐说明', 'GG修改器默认是4字节对齐（地址 % 4 = 0）。\n\n'
+                    '但 0x3 这种地址也是存在指针的，不建议开启。\n\n'
+                    '大部分指针都是规则的4字节，如果找不到指针时可以尝试开启。'),
+              ],
+            ),
+            subtitle: Text(byteAlignment ? '开启' : '关闭'),
+            value: byteAlignment,
+            onChanged: (v) => setState(() => byteAlignment = v),
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16),
+
+          // 跨页处理
+          SwitchListTile(
+            title: Row(
+              children: [
+                const Text('跨页处理'),
+                const SizedBox(width: 4),
+                _buildHelpIcon('跨页处理说明', '由于指针在 4096 字节的内存页边界被截断，导致扫描不出来。\n\n'
+                    '默认不推荐开启。\n\n'
+                    '场景：你的友人A分享了指针链条，你死活扫不出来这条，其他的可以，大概率是这个问题。'),
+              ],
+            ),
+            subtitle: Text(pageAlignment ? '开启' : '关闭'),
+            value: pageAlignment,
+            onChanged: (v) => setState(() => pageAlignment = v),
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16),
+
+          // 模块扩展
+          SwitchListTile(
+            title: Row(
+              children: [
+                const Text('模块扩展'),
+                const SizedBox(width: 4),
+                _buildHelpIcon('模块扩展说明', '开启后处理腾讯游戏对模块单独处理导致模块 index 变多的问题。\n\n'
+                    '部分 index 是随机的，开启后有一定解决能力。\n\n'
+                    '如果没有特别需要，不建议开启。'),
+              ],
+            ),
             subtitle: Text(moduleExtension ? '开启' : '关闭'),
             value: moduleExtension,
             onChanged: (v) => setState(() => moduleExtension = v),
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
+
+          // 负偏移
           SwitchListTile(
-            title: const Text('负偏移'),
+            title: Row(
+              children: [
+                const Text('负偏移'),
+                const SizedBox(width: 4),
+                _buildHelpIcon('负偏移说明', '可以增加指针链条输出量。\n\n'
+                    '场景：支持反向查找指针链条\n'
+                    '例如：libUE4.so[Cd][1]+0xffff-0x28+0x24-0x4\n\n'
+                    '开启后可以搜索负数偏移的指针。'),
+              ],
+            ),
             subtitle: Text(negativeOffset ? '开启' : '关闭'),
             value: negativeOffset,
             onChanged: (v) => setState(() => negativeOffset = v),
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16),
+
+          // 缺页处理
+          SwitchListTile(
+            title: Row(
+              children: [
+                const Text('缺页处理'),
+                const SizedBox(width: 4),
+                _buildHelpIcon('缺页处理说明', '不建议开启！\n\n'
+                    '缺页会导致大部分内存页面被跳过，导致获取不到指针。\n\n'
+                    '尽量使用自定义读写对接内核过掉搜索检测。'),
+              ],
+            ),
+            subtitle: Text(handlePageFault ? '开启' : '关闭'),
+            value: handlePageFault,
+            onChanged: (v) {
+              if (v) {
+                showDialog(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('提示'),
+                    content: const Text('缺页处理不建议开启！\n\n'
+                        '缺页会导致大部分内存页面被跳过，导致获取不到指针。\n\n'
+                        '尽量使用自定义读写对接内核过掉搜索检测。\n\n'
+                        '确定要开启吗？'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('取消'),
+                      ),
+                      FilledButton(
+                        onPressed: () {
+                          setState(() => handlePageFault = true);
+                          Navigator.pop(context);
+                        },
+                        child: const Text('确定开启'),
+                      ),
+                    ],
+                  ),
+                );
+              } else {
+                setState(() => handlePageFault = false);
+              }
+            },
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16),
+
+          // 读取受限内存（需要PREAD64或CUSTOM）
+          SwitchListTile(
+            title: Row(
+              children: [
+                const Text('读取受限内存'),
+                const SizedBox(width: 4),
+                _buildHelpIcon('读取受限内存说明', '需要PREAD64或CUSTOM读写方式。\n\n'
+                    'SYSCALL不支持此功能。\n\n'
+                    '强制读取被保护的内存段，某些内存区域被系统保护，正常情况下无法读取。'),
+              ],
+            ),
+            subtitle: Text(
+              readProtected ? '开启' : '关闭',
+              style: TextStyle(
+                color: context.watch<AppConfig>().canReadProtected
+                    ? null
+                    : Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
+              ),
+            ),
+            value: readProtected,
+            onChanged: context.watch<AppConfig>().canReadProtected
+                ? (v) => setState(() => readProtected = v)
+                : null,
+          ),
+          const Divider(height: 1, indent: 16, endIndent: 16),
+
+          // 扫描模式（最下面）
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            child: Row(
+              children: [
+                Row(
+                  children: [
+                    const Text('扫描模式'),
+                    const SizedBox(width: 4),
+                    _buildHelpIcon('扫描模式说明', '快速模式会选择性过滤已存在的指针，加快指针扫描速度和合成速度。\n\n'
+                        '缺点：会丢失部分完整的指针链条。\n\n'
+                        '普通使用完全足够，如果扫描不出来指针或者追求完整的可以开启。'),
+                  ],
+                ),
+                const Spacer(),
+                SizedBox(
+                  width: 180,
+                  child: SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment(
+                        value: false,
+                        label: Text('普通'),
+                      ),
+                      ButtonSegment(
+                        value: true,
+                        label: Text('快速'),
+                      ),
+                    ],
+                    selected: {isFastMode},
+                    onSelectionChanged: (Set<bool> selected) {
+                      setState(() => isFastMode = selected.first);
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -336,30 +502,16 @@ class _ScanScreenState extends State<ScanScreen> {
 
   /// 操作按钮
   Widget _buildActionButtons() {
-    return Row(
-      children: [
-        Expanded(
-          child: FilledButton.icon(
-            onPressed: startBasicScan,
-            icon: const Icon(Icons.search),
-            label: const Text('基础扫描'),
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-            ),
-          ),
+    return SizedBox(
+      width: double.infinity,
+      child: FilledButton.icon(
+        onPressed: startScan,
+        icon: const Icon(Icons.play_arrow),
+        label: const Text('开始扫描'),
+        style: FilledButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 16),
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: FilledButton.tonalIcon(
-            onPressed: startViolentScan,
-            icon: const Icon(Icons.flash_on),
-            label: const Text('暴力扫描'),
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -476,13 +628,6 @@ class _ScanScreenState extends State<ScanScreen> {
                           }
                         });
                       },
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '最大值: 0x$maxValue',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
                     ),
                     const SizedBox(height: 12),
 
@@ -947,6 +1092,31 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
+  Widget _buildHelpIcon(String title, String content) {
+    return GestureDetector(
+      onTap: () {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(title),
+            content: Text(content),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('知道了'),
+              ),
+            ],
+          ),
+        );
+      },
+      child: Icon(
+        Icons.help_outline,
+        size: 16,
+        color: Theme.of(context).colorScheme.primary,
+      ),
+    );
+  }
+
   void resetConfig() {
     setState(() {
       searchAddresses.clear();
@@ -960,25 +1130,19 @@ class _ScanScreenState extends State<ScanScreen> {
       scanCores = 8;
       moduleExtension = false;
       negativeOffset = false;
+      isFastMode = false;
+      readProtected = false;
     });
   }
 
-  void startBasicScan() {
+  void startScan() {
     if (searchAddresses.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('请先设置目标地址')),
       );
       return;
     }
-  }
-
-  void startViolentScan() {
-    if (searchAddresses.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请先设置目标地址')),
-      );
-      return;
-    }
+    // TODO: 实现扫描逻辑
   }
 
   /// 格式化范围显示：0x7D0 / 2000
