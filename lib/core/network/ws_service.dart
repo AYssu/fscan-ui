@@ -213,6 +213,334 @@ class WsService extends ChangeNotifier {
   }
 
   String? _loginRequestId;
+  String? _getProcessesRequestId;
+  String? _getModulesRequestId;
+  String? _getFilesRequestId;
+  String? _convertFormatRequestId;
+  String? _previewConvertedRequestId;
+  String? _debugPointersRequestId;
+
+  /// 获取进程列表
+  Future<List<Map<String, dynamic>>?> getProcesses() async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法获取进程列表');
+      return null;
+    }
+
+    final completer = Completer<List<Map<String, dynamic>>?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _getProcessesRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['processes'] != null) {
+            final processes = (data['processes'] as List)
+                .map((e) => e as Map<String, dynamic>)
+                .toList();
+            completer.complete(processes);
+          } else {
+            completer.complete([]);
+          }
+        } else {
+          completer.complete([]);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _getProcessesRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'get_processes',
+      },
+      id: _getProcessesRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 10), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 获取模块列表
+  Future<List<Map<String, dynamic>>?> getModules(String packageName) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法获取模块列表');
+      return null;
+    }
+
+    final completer = Completer<List<Map<String, dynamic>>?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _getModulesRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['modules'] != null) {
+            final modules = (data['modules'] as List)
+                .map((e) => e as Map<String, dynamic>)
+                .toList();
+            completer.complete(modules);
+          } else {
+            completer.complete([]);
+          }
+        } else {
+          completer.complete([]);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _getModulesRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'get_modules',
+        'params': {
+          'packageName': packageName,
+        },
+      },
+      id: _getModulesRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 10), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 获取文件列表
+  Future<List<Map<String, dynamic>>?> getFiles(String dir, List<String> extensions) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法获取文件列表');
+      return null;
+    }
+
+    final completer = Completer<List<Map<String, dynamic>>?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _getFilesRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['files'] != null) {
+            final files = (data['files'] as List)
+                .map((e) => e as Map<String, dynamic>)
+                .toList();
+            completer.complete(files);
+          } else {
+            completer.complete([]);
+          }
+        } else {
+          completer.complete([]);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _getFilesRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'get_files',
+        'params': {
+          'dir': dir,
+          'extensions': extensions,
+        },
+      },
+      id: _getFilesRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 10), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 转换格式文件（.out/.bin -> .txt）
+  Future<String?> convertFormatFile(String filePath, int limit, bool is32Bit) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法转换格式文件');
+      return null;
+    }
+
+    final completer = Completer<String?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _convertFormatRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['outputPath'] != null) {
+            completer.complete(data['outputPath'] as String);
+          } else {
+            completer.complete(null);
+          }
+        } else {
+          completer.complete(null);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _convertFormatRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'convert_format',
+        'params': {
+          'filePath': filePath,
+          'limit': limit,
+          'is32Bit': is32Bit,
+        },
+      },
+      id: _convertFormatRequestId,
+    ));
+
+    // 超时处理（转换可能需要较长时间）
+    Timer(const Duration(seconds: 60), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 预览转换后的 txt 文件（前200行）
+  Future<List<String>?> previewConvertedFile(String filePath) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法预览转换结果');
+      return null;
+    }
+
+    final completer = Completer<List<String>?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _previewConvertedRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['lines'] != null) {
+            final lines = (data['lines'] as List)
+                .map((e) => e.toString())
+                .toList();
+            completer.complete(lines);
+          } else {
+            completer.complete([]);
+          }
+        } else {
+          completer.complete([]);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _previewConvertedRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'preview_txt',
+        'params': {
+          'filePath': filePath,
+          'maxLines': 200,
+        },
+      },
+      id: _previewConvertedRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 15), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 批量调试指针
+  Future<List<Map<String, dynamic>>?> debugPointers(List<String> pointerChains) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法调试指针');
+      return null;
+    }
+
+    final completer = Completer<List<Map<String, dynamic>>?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _debugPointersRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['results'] != null) {
+            final results = (data['results'] as List)
+                .map((e) => e as Map<String, dynamic>)
+                .toList();
+            completer.complete(results);
+          } else {
+            completer.complete([]);
+          }
+        } else {
+          completer.complete([]);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _debugPointersRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'debug_pointers',
+        'params': {
+          'pointers': pointerChains,
+        },
+      },
+      id: _debugPointersRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 30), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
 
   /// 处理收到的消息
   void _handleMessage(dynamic data) {

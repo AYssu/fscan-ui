@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:fscan/core/theme/theme_provider.dart';
 import 'package:fscan/core/network/ws_service.dart';
 import 'package:fscan/core/utils/logger.dart';
+import 'package:fscan/core/utils/cache_utils.dart';
 import 'package:fscan/core/services/user_service.dart';
 
 /// 配置页面 - MD3 风格
-class ConfigScreen extends StatelessWidget {
+class ConfigScreen extends StatefulWidget {
   const ConfigScreen({super.key});
 
   /// 预设主题颜色
@@ -24,6 +26,70 @@ class ConfigScreen extends StatelessWidget {
     Colors.amber,
     Colors.brown,
   ];
+
+  @override
+  State<ConfigScreen> createState() => _ConfigScreenState();
+}
+
+class _ConfigScreenState extends State<ConfigScreen> {
+  String _appVersion = '';
+  String _buildNumber = '';
+  int _cacheSize = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPackageInfo();
+    _loadCacheSize();
+  }
+
+  Future<void> _loadCacheSize() async {
+    final size = await CacheUtils.getCacheSize();
+    if (mounted) {
+      setState(() {
+        _cacheSize = size;
+      });
+    }
+  }
+
+  void _showClearCacheDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清空缓存'),
+        content: const Text('确定要清空所有缓存吗？\n\n将清除：\n• 模块配置\n• 用户登录信息\n• 日志文件\n• 头像缓存\n\n主题设置将保留。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await CacheUtils.clearAllCache();
+              _loadCacheSize();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('缓存已清空')),
+                );
+              }
+            },
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _loadPackageInfo() async {
+    final packageInfo = await PackageInfo.fromPlatform();
+    if (mounted) {
+      setState(() {
+        _appVersion = packageInfo.version;
+        _buildNumber = packageInfo.buildNumber;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -362,16 +428,12 @@ class ConfigScreen extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                CircleAvatar(
-                  radius: 32,
-                  backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                  child: Text(
-                    'F',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
+                ClipOval(
+                  child: Image.asset(
+                    'assets/icon.png',
+                    width: 64,
+                    height: 64,
+                    fit: BoxFit.cover,
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -381,7 +443,7 @@ class ConfigScreen extends StatelessWidget {
                     children: [
                       Text('FastScan', style: Theme.of(context).textTheme.titleLarge),
                       const SizedBox(height: 4),
-                      Text('v1.0.0', style: Theme.of(context).textTheme.bodyMedium),
+                      Text('v$_appVersion', style: Theme.of(context).textTheme.bodyMedium),
                     ],
                   ),
                 ),
@@ -599,7 +661,7 @@ class ConfigScreen extends StatelessWidget {
           content: Wrap(
             spacing: 12,
             runSpacing: 12,
-            children: presetColors.map((color) {
+            children: ConfigScreen.presetColors.map((color) {
               final isSelected = themeProvider.seedColor.toARGB32() == color.toARGB32();
               return GestureDetector(
                 onTap: () {
@@ -686,8 +748,8 @@ class ConfigScreen extends StatelessWidget {
           const Divider(height: 1, indent: 16, endIndent: 16),
           ListTile(
             title: const Text('缓存大小'),
-            trailing: Text('12.5 MB', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-            onTap: () {},
+            trailing: Text(CacheUtils.formatSize(_cacheSize), style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+            onTap: _showClearCacheDialog,
           ),
         ],
       ),
@@ -745,14 +807,14 @@ class ConfigScreen extends StatelessWidget {
               ],
             ),
           ),
-          const ListTile(
-            title: Text('版本'),
-            trailing: Text('v1.0.0'),
+          ListTile(
+            title: const Text('版本'),
+            trailing: Text('v$_appVersion'),
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
-          const ListTile(
-            title: Text('构建'),
-            trailing: Text('2026.07.26'),
+          ListTile(
+            title: const Text('构建'),
+            trailing: Text(_buildNumber),
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
           const ListTile(

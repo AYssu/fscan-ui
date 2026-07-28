@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:go_router/go_router.dart';
 import 'package:fscan/core/config/app_config.dart';
+import 'package:fscan/core/services/module_service.dart';
 
 /// 基址搜索页面 - MD3 风格
 class ScanScreen extends StatefulWidget {
@@ -15,7 +17,6 @@ class _ScanScreenState extends State<ScanScreen> {
   List<String> searchAddresses = [];
   int scanLevel = 6;
   String scanRange = '0x7D0';
-  List<ModuleItem> selectedModules = []; // 存储完整模块信息
   bool handlePageFault = false;
   bool is32Bit = false;
   bool byteAlignment = false;
@@ -26,19 +27,6 @@ class _ScanScreenState extends State<ScanScreen> {
   bool isFastMode = false; // true=快速模式, false=普通模式
   bool readProtected = false; // 读取受限内存
   String outputPath = '/storage/emulated/0/fscan/a1.out';
-
-  // 模拟接口数据
-  final List<ModuleItem> allModules = [
-    ModuleItem(name: 'libil2cpp.so', index: '1', type: 'Cd', startAddress: '0x1000', endAddress: '0x2000'),
-    ModuleItem(name: 'libil2cpp.so', index: '2', type: 'Cb', startAddress: '0x3000', endAddress: '0x4000'),
-    ModuleItem(name: 'libil2cpp.so', index: '3', type: 'Xa', startAddress: '0x5000', endAddress: '0x6000'),
-    ModuleItem(name: 'libunity.so', index: '1', type: 'Cd', startAddress: '0x7000', endAddress: '0x8000'),
-    ModuleItem(name: 'libunity.so', index: '2', type: 'Cb', startAddress: '0x9000', endAddress: '0xA000'),
-    ModuleItem(name: 'libnative.so', index: '1', type: 'Xa', startAddress: '0xB000', endAddress: '0xC000'),
-    ModuleItem(name: 'libc.so', index: '1', type: 'Cd', startAddress: '0xD000', endAddress: '0xE000'),
-    ModuleItem(name: 'libc.so', index: '2', type: 'Cb', startAddress: '0xF000', endAddress: '0x10000'),
-    ModuleItem(name: 'libm.so', index: '1', type: 'Cb', startAddress: '0x11000', endAddress: '0x12000'),
-  ];
 
   @override
   Widget build(BuildContext context) {
@@ -60,6 +48,10 @@ class _ScanScreenState extends State<ScanScreen> {
 
             // 模块选择
             _buildModuleCard(),
+            const SizedBox(height: 16),
+
+            // 文件选择
+            _buildFileCard(),
             const SizedBox(height: 16),
 
             // 高级选项
@@ -207,6 +199,10 @@ class _ScanScreenState extends State<ScanScreen> {
 
   /// 模块选择卡片
   Widget _buildModuleCard() {
+    final appConfig = context.watch<AppConfig>();
+    final selectedModules = appConfig.selectedModules;
+    final hasPackageName = appConfig.selectedPackageName != null;
+
     // 按模块名称分组统计
     final groupedModules = <String, int>{};
     for (var module in selectedModules) {
@@ -227,6 +223,22 @@ class _ScanScreenState extends State<ScanScreen> {
                 Expanded(
                   child: Text('扫描模块', style: Theme.of(context).textTheme.titleMedium),
                 ),
+                // 显示模块来源标记
+                if (hasPackageName)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '已保存',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Theme.of(context).colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                  ),
                 // 已选数量
                 if (selectedModules.isNotEmpty)
                   Badge(
@@ -273,14 +285,65 @@ class _ScanScreenState extends State<ScanScreen> {
                             label: Text(entry.key),
                             deleteIcon: const Icon(Icons.close, size: 16),
                             onDeleted: () {
-                              setState(() {
-                                selectedModules.removeWhere((m) => m.name == entry.key);
-                              });
+                              final appConfig = context.read<AppConfig>();
+                              final currentModules = List<ModuleItem>.from(appConfig.selectedModules);
+                              currentModules.removeWhere((m) => m.name == entry.key);
+                              appConfig.setSelectedModules(currentModules);
+                              // 保存到本地
+                              if (appConfig.selectedPackageName != null) {
+                                appConfig.saveModulesForPackage(
+                                  appConfig.selectedPackageName,
+                                  currentModules,
+                                );
+                              }
                             },
                           );
                         }).toList(),
                       ),
               ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 文件选择卡片
+  Widget _buildFileCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 标题
+            Row(
+              children: [
+                Icon(Icons.folder_open, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('扫描数据', style: Theme.of(context).textTheme.titleMedium),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+
+            // 格式文件
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.transform, color: Theme.of(context).colorScheme.primary),
+              title: const Text('格式文件'),
+              subtitle: Text(
+                '转换扫描数据格式',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                context.push('/format');
+              },
             ),
           ],
         ),
@@ -892,9 +955,26 @@ class _ScanScreenState extends State<ScanScreen> {
   }
 
   void openModuleSelector() {
-    // 临时选中列表
-    List<ModuleItem> tempSelected = List<ModuleItem>.from(selectedModules);
+    final appConfig = context.read<AppConfig>();
+    final currentPackageName = appConfig.selectedPackageName;
+
+    // 如果没有选中包名，提示用户先选择
+    if (currentPackageName == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('请先在基础配置中选择进程包名'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // 临时选中列表（用户之前选中的模块）
+    List<ModuleItem> tempSelected = List<ModuleItem>.from(appConfig.selectedModules);
     String searchText = '';
+
+    // 使用 AppConfig 中的可用模块列表（从服务器获取的）
+    final modulesToShow = appConfig.availableModules;
 
     showDialog(
       context: context,
@@ -902,12 +982,31 @@ class _ScanScreenState extends State<ScanScreen> {
         return StatefulBuilder(
           builder: (context, setDialog) {
             // 筛选模块
-            final filteredModules = allModules.where((module) {
+            final filteredModules = modulesToShow.where((module) {
               return module.name.toLowerCase().contains(searchText.toLowerCase());
             }).toList();
 
             return AlertDialog(
-              title: const Text('选择扫描模块'),
+              title: Row(
+                children: [
+                  const Text('选择扫描模块'),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.tertiaryContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '将保存到本地',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Theme.of(context).colorScheme.onTertiaryContainer,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
               content: SizedBox(
                 width: double.maxFinite,
                 height: 400,
@@ -947,35 +1046,48 @@ class _ScanScreenState extends State<ScanScreen> {
                       ),
                     // 模块列表
                     Expanded(
-                      child: ListView.builder(
-                        itemCount: filteredModules.length,
-                        itemBuilder: (context, index) {
-                          final module = filteredModules[index];
-                          final isSelected = tempSelected.contains(module);
-                          return CheckboxListTile(
-                            value: isSelected,
-                            onChanged: (selected) {
-                              setDialog(() {
-                                if (selected == true) {
-                                  tempSelected.add(module);
-                                } else {
-                                  tempSelected.remove(module);
-                                }
-                              });
-                            },
-                            title: Text(module.name, style: const TextStyle(fontFamily: 'monospace')),
-                            subtitle: Text('${module.type} | ${module.startAddress} ~ ${module.endAddress}'),
-                            secondary: CircleAvatar(
-                              backgroundColor: _getTypeColor(module.type),
-                              radius: 12,
-                              child: Text(
-                                module.type,
-                                style: const TextStyle(color: Colors.white, fontSize: 10),
+                      child: modulesToShow.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.extension_off, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                  const SizedBox(height: 16),
+                                  Text('暂无模块数据', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                                  const SizedBox(height: 8),
+                                  Text('请确保已连接服务器并选择进程', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
+                                ],
                               ),
+                            )
+                          : ListView.builder(
+                              itemCount: filteredModules.length,
+                              itemBuilder: (context, index) {
+                                final module = filteredModules[index];
+                                final isSelected = tempSelected.contains(module);
+                                return CheckboxListTile(
+                                  value: isSelected,
+                                  onChanged: (selected) {
+                                    setDialog(() {
+                                      if (selected == true) {
+                                        tempSelected.add(module);
+                                      } else {
+                                        tempSelected.remove(module);
+                                      }
+                                    });
+                                  },
+                                  title: Text(module.name, style: const TextStyle(fontFamily: 'monospace')),
+                                  subtitle: Text('${module.type} | ${module.startAddress} ~ ${module.endAddress}'),
+                                  secondary: CircleAvatar(
+                                    backgroundColor: _getTypeColor(module.type),
+                                    radius: 12,
+                                    child: Text(
+                                      module.type,
+                                      style: const TextStyle(color: Colors.white, fontSize: 10),
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
-                          );
-                        },
-                      ),
                     ),
                   ],
                 ),
@@ -987,7 +1099,16 @@ class _ScanScreenState extends State<ScanScreen> {
                 ),
                 FilledButton(
                   onPressed: () {
-                    setState(() => selectedModules = tempSelected);
+                    // 更新 AppConfig 中的模块
+                    appConfig.setSelectedModules(tempSelected);
+
+                    // 保存到本地文件
+                    appConfig.saveModulesForPackage(
+                      currentPackageName,
+                      tempSelected,
+                    );
+
+                    setState(() {});
                     Navigator.pop(context);
                   },
                   child: Text('确定 (${tempSelected.length})'),
@@ -1133,35 +1254,4 @@ class _ScanScreenState extends State<ScanScreen> {
     final hexStr = decValue.toRadixString(16).toUpperCase();
     return '0x$hexStr / $decValue';
   }
-}
-
-/// 模块数据模型
-class ModuleItem {
-  final String name;
-  final String index;
-  final String type;
-  final String startAddress;
-  final String endAddress;
-
-  ModuleItem({
-    required this.name,
-    required this.index,
-    required this.type,
-    required this.startAddress,
-    required this.endAddress,
-  });
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ModuleItem &&
-          runtimeType == other.runtimeType &&
-          name == other.name &&
-          index == other.index &&
-          type == other.type &&
-          startAddress == other.startAddress &&
-          endAddress == other.endAddress;
-
-  @override
-  int get hashCode => name.hashCode ^ index.hashCode ^ type.hashCode ^ startAddress.hashCode ^ endAddress.hashCode;
 }

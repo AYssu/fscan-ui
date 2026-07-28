@@ -5,6 +5,8 @@ import 'package:fscan/features/filter/presentation/screens/filter_screen.dart';
 import 'package:fscan/features/driver/presentation/screens/driver_screen.dart';
 import 'package:fscan/features/config/presentation/screens/config_screen.dart';
 import 'package:fscan/features/home/presentation/screens/home_screen.dart';
+import 'package:fscan/features/format/presentation/screens/format_screen.dart';
+import 'package:fscan/features/pointer_debug/presentation/screens/pointer_debug_screen.dart';
 
 /// 应用路由配置
 final appRouter = GoRouter(
@@ -62,6 +64,16 @@ final appRouter = GoRouter(
           ],
         ),
       ],
+    ),
+    // 格式文件页面（独立页面）
+    GoRoute(
+      path: '/format',
+      builder: (context, state) => const FormatScreen(),
+    ),
+    // 指针批量调试页面（独立页面）
+    GoRoute(
+      path: '/pointer-debug',
+      builder: (context, state) => const PointerDebugScreen(),
     ),
   ],
 );

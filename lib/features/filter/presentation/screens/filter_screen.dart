@@ -1,18 +1,42 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:go_router/go_router.dart';
+import 'package:fscan/core/network/ws_service.dart';
 
 /// 文件数据模型
 class FilterFile {
   final String name;
-  final String arch;
-  final String size;
-  final String date;
+  final String path;
+  final int size;
+  final String modified;
+  final String extension;
+  final String? arch;  // out/bin 文件才有 arch
 
   FilterFile({
     required this.name,
-    required this.arch,
+    required this.path,
     required this.size,
-    required this.date,
+    required this.modified,
+    required this.extension,
+    this.arch,
   });
+
+  factory FilterFile.fromJson(Map<String, dynamic> json) {
+    return FilterFile(
+      name: json['name'] ?? '',
+      path: json['path'] ?? '',
+      size: json['size'] ?? 0,
+      modified: json['modified'] ?? '',
+      extension: json['extension'] ?? '',
+      arch: json['arch'],
+    );
+  }
+
+  String get sizeText {
+    if (size < 1024) return '$size B';
+    if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
+    return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
 }
 
 /// 基址过滤页面 - MD3 风格
@@ -30,13 +54,43 @@ class _FilterScreenState extends State<FilterScreen> {
   FilterFile? selectedFile;
   String outputPath = '/storage/emulated/0/fscan/a1.txt';
 
-  // 模拟文件数据（txt文件）
-  final List<FilterFile> allFiles = [
-    FilterFile(name: 'a1.txt', arch: 'x64', size: '10.01mb', date: '2026-12-12 13:12:12'),
-    FilterFile(name: 'a2.txt', arch: 'x64', size: '8.5mb', date: '2026-12-12 14:20:00'),
-    FilterFile(name: 'b1.txt', arch: 'arm64', size: '12.3mb', date: '2026-12-13 10:00:00'),
-    FilterFile(name: 'c1.txt', arch: 'x86', size: '5.5mb', date: '2026-12-14 09:00:00'),
-  ];
+  // 文件相关
+  String dataDir = '/sdcard/fscan/data';
+  List<FilterFile> availableFiles = [];
+  bool _isLoadingFiles = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadFiles();
+    });
+  }
+
+  /// 加载文件列表
+  Future<void> _loadFiles() async {
+    if (!mounted) return;
+
+    setState(() => _isLoadingFiles = true);
+
+    try {
+      final wsService = context.read<WsService>();
+      final files = await wsService.getFiles(dataDir, ['txt']);
+
+      if (files != null && mounted) {
+        setState(() {
+          availableFiles = files.map((f) => FilterFile.fromJson(f)).toList();
+          _isLoadingFiles = false;
+        });
+      } else if (mounted) {
+        setState(() => _isLoadingFiles = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingFiles = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -197,7 +251,7 @@ class _FilterScreenState extends State<FilterScreen> {
                             radius: 16,
                             backgroundColor: Theme.of(context).colorScheme.primary,
                             child: Text(
-                              selectedFile!.arch == 'x64' ? '64' : selectedFile!.arch == 'x86' ? '32' : 'A',
+                              selectedFile!.extension.toUpperCase(),
                               style: const TextStyle(fontSize: 10, color: Colors.white),
                             ),
                           ),
@@ -211,7 +265,7 @@ class _FilterScreenState extends State<FilterScreen> {
                                   style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w500),
                                 ),
                                 Text(
-                                  '${selectedFile!.arch} | ${selectedFile!.size}',
+                                  '${selectedFile!.sizeText} | ${selectedFile!.modified}',
                                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                                   ),
@@ -226,6 +280,49 @@ class _FilterScreenState extends State<FilterScreen> {
                         ],
                       ),
               ),
+            ),
+
+            // 功能入口
+            const Divider(),
+
+            // 指针批量调试
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.bug_report, color: Theme.of(context).colorScheme.primary),
+              title: const Text('指针批量调试'),
+              subtitle: Text(
+                '批量测试指针链有效性',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                context.push('/pointer-debug');
+              },
+            ),
+            const Divider(),
+
+            // 模板转换
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.content_copy, color: Theme.of(context).colorScheme.primary),
+              title: const Text('模板转换'),
+              subtitle: Text(
+                '指针链模板格式转换',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () {
+                // TODO: 跳转到模板转换页面
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('模板转换页面开发中...')),
+                );
+              },
             ),
           ],
         ),
@@ -340,15 +437,11 @@ class _FilterScreenState extends State<FilterScreen> {
   }
 
   /// 选择文件弹窗
-  void selectFile() {
-    // 根据位数筛选文件
-    final filteredByArch = allFiles.where((file) {
-      if (is32Bit) {
-        return file.arch == 'x86';
-      } else {
-        return file.arch == 'x64' || file.arch == 'arm64';
-      }
-    }).toList();
+  Future<void> selectFile() async {
+    // 先加载文件
+    await _loadFiles();
+
+    if (!mounted) return;
 
     String searchText = '';
     FilterFile? tempSelected = selectedFile;
@@ -358,7 +451,7 @@ class _FilterScreenState extends State<FilterScreen> {
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialog) {
-            final filteredFiles = filteredByArch.where((file) {
+            final filteredFiles = availableFiles.where((file) {
               return file.name.toLowerCase().contains(searchText.toLowerCase());
             }).toList();
 
@@ -367,70 +460,76 @@ class _FilterScreenState extends State<FilterScreen> {
                 children: [
                   const Text('选择文件'),
                   const Spacer(),
-                  Text(
-                    is32Bit ? '32位' : '64位',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: () async {
+                      await _loadFiles();
+                      setDialog(() {});
+                    },
                   ),
                 ],
               ),
               content: SizedBox(
                 width: double.maxFinite,
                 height: 350,
-                child: Column(
-                  children: [
-                    TextField(
-                      decoration: InputDecoration(
-                        hintText: '搜索文件...',
-                        prefixIcon: const Icon(Icons.search),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(28),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                      ),
-                      onChanged: (value) {
-                        setDialog(() => searchText = value);
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    Expanded(
-                      child: filteredFiles.isEmpty
-                          ? Center(
-                              child: Text(
-                                '没有找到${is32Bit ? '32位' : '64位'}文件',
-                                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                              ),
-                            )
-                          : RadioGroup<FilterFile>(
-                              groupValue: tempSelected,
-                              onChanged: (value) {
-                                setDialog(() => tempSelected = value);
-                              },
-                              child: ListView.builder(
-                                itemCount: filteredFiles.length,
-                                itemBuilder: (context, index) {
-                                  final file = filteredFiles[index];
-                                  return RadioListTile<FilterFile>(
-                                    value: file,
-                                    title: Text(file.name, style: const TextStyle(fontFamily: 'monospace')),
-                                    subtitle: Text('${file.arch} | ${file.size} | ${file.date}'),
-                                    secondary: CircleAvatar(
-                                      backgroundColor: Theme.of(context).colorScheme.primary,
-                                      radius: 12,
-                                      child: Text(
-                                        file.arch == 'x64' ? '64' : file.arch == 'x86' ? '32' : 'A',
-                                        style: const TextStyle(fontSize: 10, color: Colors.white),
-                                      ),
-                                    ),
-                                  );
+                child: _isLoadingFiles
+                    ? const Center(child: CircularProgressIndicator())
+                    : filteredFiles.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.folder_off, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                const SizedBox(height: 16),
+                                Text('暂无文件', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                              ],
+                            ),
+                          )
+                        : Column(
+                            children: [
+                              TextField(
+                                decoration: InputDecoration(
+                                  hintText: '搜索文件...',
+                                  prefixIcon: const Icon(Icons.search),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(28),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                                ),
+                                onChanged: (value) {
+                                  setDialog(() => searchText = value);
                                 },
                               ),
-                            ),
-                    ),
-                  ],
-                ),
+                              const SizedBox(height: 12),
+                              Expanded(
+                                child: RadioGroup<FilterFile>(
+                                  groupValue: tempSelected,
+                                  onChanged: (value) {
+                                    setDialog(() => tempSelected = value);
+                                  },
+                                  child: ListView.builder(
+                                    itemCount: filteredFiles.length,
+                                    itemBuilder: (context, index) {
+                                      final file = filteredFiles[index];
+                                      return RadioListTile<FilterFile>(
+                                        value: file,
+                                        title: Text(file.name, style: const TextStyle(fontFamily: 'monospace')),
+                                        subtitle: Text('${file.sizeText} | ${file.modified}'),
+                                        secondary: CircleAvatar(
+                                          backgroundColor: Theme.of(context).colorScheme.primary,
+                                          radius: 12,
+                                          child: Text(
+                                            file.extension.toUpperCase(),
+                                            style: const TextStyle(fontSize: 10, color: Colors.white),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
               ),
               actions: [
                 TextButton(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fscan/core/config/app_config.dart';
+import 'package:fscan/core/network/ws_service.dart';
 
 /// 进程数据模型
 class ProcessInfo {
@@ -50,14 +51,47 @@ class _DriverScreenState extends State<DriverScreen> {
     'All': false,
   };
 
-  // 模拟进程数据
-  final List<ProcessInfo> allProcesses = [
-    ProcessInfo(packageName: 'com.tencent.tmgp.sgame', arch: 'x64', pid: 12345),
-    ProcessInfo(packageName: 'com.miHoYo.Yuanshen', arch: 'x64', pid: 23456),
-    ProcessInfo(packageName: 'com.netease.g93na', arch: 'x64', pid: 34567),
-    ProcessInfo(packageName: 'com.tencent.ig', arch: 'x64', pid: 45678),
-    ProcessInfo(packageName: 'com.activision.callofduty.shooter', arch: 'arm64', pid: 56789),
-  ];
+  // 进程列表
+  List<ProcessInfo> allProcesses = [];
+  bool _isLoadingProcesses = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // 延迟到 build 完成后再加载，避免 setState during build 错误
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadProcesses();
+    });
+  }
+
+  /// 从服务器加载进程列表
+  Future<void> _loadProcesses() async {
+    if (!mounted) return;
+
+    setState(() => _isLoadingProcesses = true);
+
+    try {
+      final wsService = context.read<WsService>();
+      final processes = await wsService.getProcesses();
+
+      if (processes != null && mounted) {
+        setState(() {
+          allProcesses = processes.map((p) => ProcessInfo(
+            packageName: p['packageName'] ?? '',
+            arch: p['arch'] ?? 'x64',
+            pid: p['pid'] ?? 0,
+          )).toList();
+          _isLoadingProcesses = false;
+        });
+      } else if (mounted) {
+        setState(() => _isLoadingProcesses = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingProcesses = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -562,7 +596,23 @@ class _DriverScreenState extends State<DriverScreen> {
             }).toList();
 
             return AlertDialog(
-              title: const Text('选择进程'),
+              title: Row(
+                children: [
+                  const Text('选择进程'),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: _isLoadingProcesses
+                        ? null
+                        : () async {
+                            setDialog(() => _isLoadingProcesses = true);
+                            await _loadProcesses();
+                            setDialog(() {});
+                          },
+                    tooltip: '刷新进程列表',
+                  ),
+                ],
+              ),
               content: SizedBox(
                 width: double.maxFinite,
                 height: 400,
@@ -583,34 +633,49 @@ class _DriverScreenState extends State<DriverScreen> {
                     ),
                     const SizedBox(height: 12),
                     Expanded(
-                      child: RadioGroup<ProcessInfo>(
-                        groupValue: tempSelected,
-                        onChanged: (value) {
-                          setDialog(() => tempSelected = value);
-                        },
-                        child: ListView.builder(
-                          itemCount: filteredProcesses.length,
-                          itemBuilder: (context, index) {
-                            final process = filteredProcesses[index];
-                            return RadioListTile<ProcessInfo>(
-                              value: process,
-                              title: Text(
-                                process.packageName,
-                                style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                              ),
-                              subtitle: Text('${process.arch} | PID: ${process.pid}'),
-                              secondary: CircleAvatar(
-                                backgroundColor: Theme.of(context).colorScheme.primary,
-                                radius: 14,
-                                child: Text(
-                                  process.arch == 'x64' ? '64' : '32',
-                                  style: const TextStyle(fontSize: 10, color: Colors.white),
+                      child: _isLoadingProcesses
+                          ? const Center(child: CircularProgressIndicator())
+                          : filteredProcesses.isEmpty
+                              ? Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.search_off, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                      const SizedBox(height: 16),
+                                      Text('暂无进程', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                                      const SizedBox(height: 8),
+                                      Text('请先连接服务器并刷新', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
+                                    ],
+                                  ),
+                                )
+                              : RadioGroup<ProcessInfo>(
+                                  groupValue: tempSelected,
+                                  onChanged: (value) {
+                                    setDialog(() => tempSelected = value);
+                                  },
+                                  child: ListView.builder(
+                                    itemCount: filteredProcesses.length,
+                                    itemBuilder: (context, index) {
+                                      final process = filteredProcesses[index];
+                                      return RadioListTile<ProcessInfo>(
+                                        value: process,
+                                        title: Text(
+                                          process.packageName,
+                                          style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                                        ),
+                                        subtitle: Text('${process.arch} | PID: ${process.pid}'),
+                                        secondary: CircleAvatar(
+                                          backgroundColor: Theme.of(context).colorScheme.primary,
+                                          radius: 14,
+                                          child: Text(
+                                            process.arch == 'x64' ? '64' : '32',
+                                            style: const TextStyle(fontSize: 10, color: Colors.white),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
                                 ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
                     ),
                   ],
                 ),
@@ -621,14 +686,33 @@ class _DriverScreenState extends State<DriverScreen> {
                   child: const Text('取消'),
                 ),
                 FilledButton(
-                  onPressed: () {
-                    setState(() {
-                      selectedProcess = tempSelected;
-                      pidInput = tempSelected?.pid.toString() ?? '';
-                      restartRequired = true;
-                    });
-                    Navigator.pop(context);
-                  },
+                  onPressed: tempSelected == null
+                      ? null
+                      : () async {
+                          setState(() {
+                            selectedProcess = tempSelected;
+                            pidInput = tempSelected?.pid.toString() ?? '';
+                            restartRequired = true;
+                          });
+
+                          // 通知 AppConfig 选中的进程
+                          final appConfig = context.read<AppConfig>();
+                          final wsService = context.read<WsService>();
+                          appConfig.setSelectedProcess(
+                            tempSelected?.packageName,
+                            tempSelected?.pid,
+                          );
+
+                          // 从服务器获取模块并加载
+                          await appConfig.fetchAndLoadModules(
+                            wsService,
+                            tempSelected?.packageName,
+                          );
+
+                          if (mounted && context.mounted) {
+                            Navigator.pop(context);
+                          }
+                        },
                   child: const Text('确定'),
                 ),
               ],

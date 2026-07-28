@@ -1,6 +1,6 @@
 {
-    "name": "fscan",
-    "short_name": "fscan",
+    "name": "FastScan",
+    "short_name": "FastScan",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#000000",

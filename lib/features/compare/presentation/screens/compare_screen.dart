@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:fscan/core/network/ws_service.dart';
 
 /// 对比模式枚举
 enum CompareMode {
@@ -10,16 +12,37 @@ enum CompareMode {
 /// 文件数据模型
 class CompareFile {
   final String name;
-  final String arch;
-  final String size;
-  final String date;
+  final String path;
+  final int size;
+  final String modified;
+  final String extension;
+  final String? arch;  // out/bin 文件才有 arch
 
   CompareFile({
     required this.name,
-    required this.arch,
+    required this.path,
     required this.size,
-    required this.date,
+    required this.modified,
+    required this.extension,
+    this.arch,
   });
+
+  factory CompareFile.fromJson(Map<String, dynamic> json) {
+    return CompareFile(
+      name: json['name'] ?? '',
+      path: json['path'] ?? '',
+      size: json['size'] ?? 0,
+      modified: json['modified'] ?? '',
+      extension: json['extension'] ?? '',
+      arch: json['arch'],
+    );
+  }
+
+  String get sizeText {
+    if (size < 1024) return '$size B';
+    if (size < 1024 * 1024) return '${(size / 1024).toStringAsFixed(1)} KB';
+    return '${(size / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
 }
 
 /// 基址对比页面 - MD3 风格
@@ -45,15 +68,10 @@ class _CompareScreenState extends State<CompareScreen> {
   bool is32Bit = false; // 进程位数
   String outputPath = '/storage/emulated/0/fscan/a1.txt';
 
-  // 模拟文件数据
-  final List<CompareFile> allFiles = [
-    CompareFile(name: 'a1.out', arch: 'x64', size: '10.01mb', date: '2026-12-12 13:12:12'),
-    CompareFile(name: 'a2.out', arch: 'x64', size: '8.5mb', date: '2026-12-12 14:20:00'),
-    CompareFile(name: 'b1.out', arch: 'arm64', size: '12.3mb', date: '2026-12-13 10:00:00'),
-    CompareFile(name: 'b2.out', arch: 'arm64', size: '9.8mb', date: '2026-12-13 11:30:00'),
-    CompareFile(name: 'c1.out', arch: 'x64', size: '15.2mb', date: '2026-12-14 09:00:00'),
-    CompareFile(name: 'c2.out', arch: 'x86', size: '5.5mb', date: '2026-12-14 15:00:00'),
-  ];
+  // 文件相关
+  String dataDir = '/sdcard/fscan/data';
+  List<CompareFile> availableFiles = [];
+  bool _isLoadingFiles = false;
 
   // 当前模式支持的最大文件数
   int get maxFileCount {
@@ -63,6 +81,39 @@ class _CompareScreenState extends State<CompareScreen> {
       case CompareMode.fast:
       case CompareMode.single:
         return 8;
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadFiles();
+    });
+  }
+
+  /// 加载文件列表
+  Future<void> _loadFiles() async {
+    if (!mounted) return;
+
+    setState(() => _isLoadingFiles = true);
+
+    try {
+      final wsService = context.read<WsService>();
+      final files = await wsService.getFiles(dataDir, ['out']);
+
+      if (files != null && mounted) {
+        setState(() {
+          availableFiles = files.map((f) => CompareFile.fromJson(f)).toList();
+          _isLoadingFiles = false;
+        });
+      } else if (mounted) {
+        setState(() => _isLoadingFiles = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingFiles = false);
+      }
     }
   }
 
@@ -293,14 +344,6 @@ class _CompareScreenState extends State<CompareScreen> {
                     onSelectionChanged: (Set<bool> selected) {
                       setState(() {
                         is32Bit = selected.first;
-                        // 切换位数时清理不匹配的文件
-                        selectedFiles.removeWhere((file) {
-                          if (is32Bit) {
-                            return file.arch != 'x86';
-                          } else {
-                            return file.arch == 'x86';
-                          }
-                        });
                       });
                     },
                   ),
@@ -396,7 +439,9 @@ class _CompareScreenState extends State<CompareScreen> {
                                         style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w500),
                                       ),
                                       Text(
-                                        '${file.arch} | ${file.size}',
+                                        file.arch != null
+                                            ? '${file.arch} | ${file.sizeText} | ${file.modified}'
+                                            : '${file.sizeText} | ${file.modified}',
                                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                                         ),
@@ -834,26 +879,22 @@ class _CompareScreenState extends State<CompareScreen> {
   }
 
   /// 选择文件弹窗
-  void selectFiles() {
+  Future<void> selectFiles() async {
     List<CompareFile> tempSelected = List.from(selectedFiles);
     String searchText = '';
+
+    // 先加载文件
+    await _loadFiles();
+
+    if (!mounted) return;
 
     showDialog(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialog) {
-            // 根据位数筛选文件
-            final filesByArch = allFiles.where((file) {
-              if (is32Bit) {
-                return file.arch == 'x86';
-              } else {
-                return file.arch == 'x64' || file.arch == 'arm64';
-              }
-            }).toList();
-
             // 搜索筛选
-            final filteredFiles = filesByArch.where((file) {
+            final filteredFiles = availableFiles.where((file) {
               return file.name.toLowerCase().contains(searchText.toLowerCase());
             }).toList();
 
@@ -862,14 +903,13 @@ class _CompareScreenState extends State<CompareScreen> {
                 children: [
                   const Text('选择文件'),
                   const Spacer(),
-                  Text(
-                    is32Bit ? '32位' : '64位',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: () async {
+                      await _loadFiles();
+                      setDialog(() {});
+                    },
                   ),
-                  const SizedBox(width: 8),
                   Text(
                     '${tempSelected.length}/$maxFileCount',
                     style: TextStyle(
@@ -884,61 +924,76 @@ class _CompareScreenState extends State<CompareScreen> {
               content: SizedBox(
                 width: double.maxFinite,
                 height: 400,
-                child: Column(
-                  children: [
-                    // 搜索框
-                    TextField(
-                      decoration: InputDecoration(
-                        hintText: '搜索文件...',
-                        prefixIcon: const Icon(Icons.search),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(28),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                      ),
-                      onChanged: (value) {
-                        setDialog(() => searchText = value);
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    // 文件列表
-                    Expanded(
-                      child: ListView.builder(
-                        itemCount: filteredFiles.length,
-                        itemBuilder: (context, index) {
-                          final file = filteredFiles[index];
-                          final isSelected = tempSelected.contains(file);
-                          final canSelect = tempSelected.length < maxFileCount || isSelected;
-
-                          return CheckboxListTile(
-                            value: isSelected,
-                            onChanged: canSelect
-                                ? (selected) {
-                                    setDialog(() {
-                                      if (selected == true) {
-                                        tempSelected.add(file);
-                                      } else {
-                                        tempSelected.remove(file);
-                                      }
-                                    });
-                                  }
-                                : null,
-                            title: Text(file.name, style: const TextStyle(fontFamily: 'monospace')),
-                            subtitle: Text('${file.arch} | ${file.size} | ${file.date}'),
-                            secondary: CircleAvatar(
-                              backgroundColor: Theme.of(context).colorScheme.primary,
-                              radius: 12,
-                              child: Text(
-                                file.arch == 'x64' ? '64' : file.arch == 'x86' ? '32' : 'A',
-                                style: const TextStyle(fontSize: 10, color: Colors.white),
-                              ),
+                child: _isLoadingFiles
+                    ? const Center(child: CircularProgressIndicator())
+                    : filteredFiles.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.folder_off, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                const SizedBox(height: 16),
+                                Text('暂无文件', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                              ],
                             ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
+                          )
+                        : Column(
+                            children: [
+                              // 搜索框
+                              TextField(
+                                decoration: InputDecoration(
+                                  hintText: '搜索文件...',
+                                  prefixIcon: const Icon(Icons.search),
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(28),
+                                  ),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                                ),
+                                onChanged: (value) {
+                                  setDialog(() => searchText = value);
+                                },
+                              ),
+                              const SizedBox(height: 12),
+                              // 文件列表
+                              Expanded(
+                                child: ListView.builder(
+                                  itemCount: filteredFiles.length,
+                                  itemBuilder: (context, index) {
+                                    final file = filteredFiles[index];
+                                    final isSelected = tempSelected.any((f) => f.path == file.path);
+                                    final canSelect = tempSelected.length < maxFileCount || isSelected;
+
+                                    return CheckboxListTile(
+                                      value: isSelected,
+                                      onChanged: canSelect
+                                          ? (selected) {
+                                              setDialog(() {
+                                                if (selected == true) {
+                                                  tempSelected.add(file);
+                                                } else {
+                                                  tempSelected.removeWhere((f) => f.path == file.path);
+                                                }
+                                              });
+                                            }
+                                          : null,
+                                      title: Text(file.name, style: const TextStyle(fontFamily: 'monospace')),
+                                      subtitle: Text(file.arch != null
+                                          ? '${file.arch} | ${file.sizeText} | ${file.modified}'
+                                          : '${file.sizeText} | ${file.modified}'),
+                                      secondary: CircleAvatar(
+                                        backgroundColor: Theme.of(context).colorScheme.primary,
+                                        radius: 12,
+                                        child: Text(
+                                          file.extension.toUpperCase(),
+                                          style: const TextStyle(fontSize: 10, color: Colors.white),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
               ),
               actions: [
                 TextButton(

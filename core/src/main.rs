@@ -245,6 +245,314 @@ fn handle_command(msg: &WsMessage) -> WsMessage {
                 )
             }
         }
+        "get_processes" => {
+            // 获取进程列表（假数据）
+            info!("  ├─ Processing: get_processes");
+            WsMessage::response(
+                msg.id.clone(),
+                serde_json::json!({
+                    "success": true,
+                    "processes": [
+                        {
+                            "packageName": "com.tencent.tmgp.sgame",
+                            "arch": "x64",
+                            "pid": 12345
+                        },
+                        {
+                            "packageName": "com.miHoYo.Yuanshen",
+                            "arch": "x64",
+                            "pid": 23456
+                        },
+                        {
+                            "packageName": "com.netease.g93na",
+                            "arch": "x64",
+                            "pid": 34567
+                        },
+                        {
+                            "packageName": "com.tencent.ig",
+                            "arch": "x64",
+                            "pid": 45678
+                        },
+                        {
+                            "packageName": "com.activision.callofduty.shooter",
+                            "arch": "arm64",
+                            "pid": 56789
+                        }
+                    ]
+                }),
+            )
+        }
+        "get_modules" => {
+            // 获取模块列表（假数据，根据包名返回不同模块）
+            let package_name = params
+                .and_then(|p| p.get("packageName"))
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+
+            info!("  ├─ Processing: get_modules package={}", package_name);
+
+            let modules = match package_name {
+                "com.tencent.tmgp.sgame" => {
+                    // 王者荣耀模块
+                    serde_json::json!([
+                        {"name": "libil2cpp.so", "index": "1", "type": "Cd", "startAddress": "0x100000", "endAddress": "0x250000"},
+                        {"name": "libil2cpp.so", "index": "2", "type": "Cb", "startAddress": "0x250000", "endAddress": "0x2A0000"},
+                        {"name": "libil2cpp.so", "index": "3", "type": "Xa", "startAddress": "0x2A0000", "endAddress": "0x500000"},
+                        {"name": "libunity.so", "index": "1", "type": "Cd", "startAddress": "0x500000", "endAddress": "0x580000"},
+                        {"name": "libunity.so", "index": "2", "type": "Xa", "startAddress": "0x580000", "endAddress": "0x620000"},
+                        {"name": "libc.so", "index": "1", "type": "Cd", "startAddress": "0x700000", "endAddress": "0x720000"},
+                        {"name": "libc.so", "index": "2", "type": "Cb", "startAddress": "0x720000", "endAddress": "0x740000"}
+                    ])
+                }
+                "com.miHoYo.Yuanshen" => {
+                    // 原神模块
+                    serde_json::json!([
+                        {"name": "libil2cpp.so", "index": "1", "type": "Cd", "startAddress": "0x800000", "endAddress": "0xA00000"},
+                        {"name": "libil2cpp.so", "index": "2", "type": "Cb", "startAddress": "0xA00000", "endAddress": "0xA80000"},
+                        {"name": "libil2cpp.so", "index": "3", "type": "Xa", "startAddress": "0xA80000", "endAddress": "0xD00000"},
+                        {"name": "libunity.so", "index": "1", "type": "Cd", "startAddress": "0xD00000", "endAddress": "0xD80000"},
+                        {"name": "libnative.so", "index": "1", "type": "Xa", "startAddress": "0xE00000", "endAddress": "0xE80000"},
+                        {"name": "libmihoyo.so", "index": "1", "type": "Cd", "startAddress": "0xF00000", "endAddress": "0xF50000"},
+                        {"name": "libc.so", "index": "1", "type": "Cd", "startAddress": "0x1000000", "endAddress": "0x1020000"},
+                        {"name": "libdl.so", "index": "1", "type": "Cb", "startAddress": "0x1020000", "endAddress": "0x1030000"}
+                    ])
+                }
+                "com.netease.g93na" => {
+                    // 第五人格模块
+                    serde_json::json!([
+                        {"name": "libgame.so", "index": "1", "type": "Cd", "startAddress": "0x1100000", "endAddress": "0x1200000"},
+                        {"name": "libgame.so", "index": "2", "type": "Xa", "startAddress": "0x1200000", "endAddress": "0x1350000"},
+                        {"name": "libunity.so", "index": "1", "type": "Cd", "startAddress": "0x1400000", "endAddress": "0x1480000"},
+                        {"name": "libc.so", "index": "1", "type": "Cd", "startAddress": "0x1500000", "endAddress": "0x1520000"}
+                    ])
+                }
+                "com.tencent.ig" => {
+                    // PUBG Mobile模块
+                    serde_json::json!([
+                        {"name": "libtersafe2.so", "index": "1", "type": "Cd", "startAddress": "0x1600000", "endAddress": "0x1700000"},
+                        {"name": "libUE4.so", "index": "1", "type": "Cd", "startAddress": "0x1700000", "endAddress": "0x1A00000"},
+                        {"name": "libUE4.so", "index": "2", "type": "Cb", "startAddress": "0x1A00000", "endAddress": "0x1A80000"},
+                        {"name": "libUE4.so", "index": "3", "type": "Xa", "startAddress": "0x1A80000", "endAddress": "0x2000000"},
+                        {"name": "libc.so", "index": "1", "type": "Cd", "startAddress": "0x2100000", "endAddress": "0x2120000"}
+                    ])
+                }
+                "com.activision.callofduty.shooter" => {
+                    // 使命召唤模块
+                    serde_json::json!([
+                        {"name": "libil2cpp.so", "index": "1", "type": "Cd", "startAddress": "0x2200000", "endAddress": "0x2400000"},
+                        {"name": "libil2cpp.so", "index": "2", "type": "Xa", "startAddress": "0x2400000", "endAddress": "0x2700000"},
+                        {"name": "libnative.so", "index": "1", "type": "Xa", "startAddress": "0x2800000", "endAddress": "0x2900000"},
+                        {"name": "libc.so", "index": "1", "type": "Cd", "startAddress": "0x2A00000", "endAddress": "0x2A20000"}
+                    ])
+                }
+                _ => {
+                    // 默认模块
+                    serde_json::json!([
+                        {"name": "libmain.so", "index": "1", "type": "Cd", "startAddress": "0x3000000", "endAddress": "0x3100000"},
+                        {"name": "libc.so", "index": "1", "type": "Cd", "startAddress": "0x3200000", "endAddress": "0x3220000"}
+                    ])
+                }
+            };
+
+            WsMessage::response(
+                msg.id.clone(),
+                serde_json::json!({
+                    "success": true,
+                    "packageName": package_name,
+                    "modules": modules
+                }),
+            )
+        }
+        "get_files" => {
+            // 获取文件列表（假数据）
+            let dir = params
+                .and_then(|p| p.get("dir"))
+                .and_then(|d| d.as_str())
+                .unwrap_or("/sdcard/fscan/data");
+            let extensions = params
+                .and_then(|p| p.get("extensions"))
+                .and_then(|e| e.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+                .unwrap_or_else(|| vec!["out", "txt"]);
+
+            info!("  ├─ Processing: get_files dir={} extensions={:?}", dir, extensions);
+
+            // 所有假数据
+            let all_files = vec![
+                serde_json::json!({
+                    "name": "scan_result_20260726.out",
+                    "path": "/sdcard/fscan/data/scan_result_20260726.out",
+                    "size": 1258291,
+                    "modified": "2026-07-26 14:30:22",
+                    "extension": "out",
+                    "arch": "x64"
+                }),
+                serde_json::json!({
+                    "name": "scan_result_20260725.out",
+                    "path": "/sdcard/fscan/data/scan_result_20260725.out",
+                    "size": 892416,
+                    "modified": "2026-07-25 18:15:45",
+                    "extension": "out",
+                    "arch": "arm64"
+                }),
+                serde_json::json!({
+                    "name": "pointer_list.txt",
+                    "path": "/sdcard/fscan/data/pointer_list.txt",
+                    "size": 45678,
+                    "modified": "2026-07-26 10:22:11",
+                    "extension": "txt"
+                }),
+                serde_json::json!({
+                    "name": "game_data.txt",
+                    "path": "/sdcard/fscan/data/game_data.txt",
+                    "size": 234567,
+                    "modified": "2026-07-24 09:45:33",
+                    "extension": "txt"
+                }),
+                serde_json::json!({
+                    "name": "base_address.out",
+                    "path": "/sdcard/fscan/data/base_address.out",
+                    "size": 67890,
+                    "modified": "2026-07-23 16:58:12",
+                    "extension": "out",
+                    "arch": "x86"
+                }),
+            ];
+
+            // 根据 extensions 过滤文件
+            let files: Vec<_> = all_files.into_iter()
+                .filter(|f| {
+                    let ext = f.get("extension").and_then(|e| e.as_str()).unwrap_or("");
+                    extensions.contains(&ext)
+                })
+                .collect();
+
+            WsMessage::response(
+                msg.id.clone(),
+                serde_json::json!({
+                    "success": true,
+                    "dir": dir,
+                    "extensions": extensions,
+                    "files": files
+                }),
+            )
+        }
+        "convert_format" => {
+            // 转换格式文件（假数据）
+            let file_path = params
+                .and_then(|p| p.get("filePath"))
+                .and_then(|f| f.as_str())
+                .unwrap_or("");
+            let limit = params
+                .and_then(|p| p.get("limit"))
+                .and_then(|l| l.as_i64())
+                .unwrap_or(300000000);
+            let is_32bit = params
+                .and_then(|p| p.get("is32Bit"))
+                .and_then(|b| b.as_bool())
+                .unwrap_or(false);
+
+            info!("  ├─ Processing: convert_format file={} limit={} is32bit={}", file_path, limit, is_32bit);
+
+            // 生成输出文件路径（将 .out/.bin 替换为 .txt）
+            let output_path = if file_path.ends_with(".out") {
+                file_path.replace(".out", ".txt")
+            } else if file_path.ends_with(".bin") {
+                file_path.replace(".bin", ".txt")
+            } else {
+                format!("{}.txt", file_path)
+            };
+
+            WsMessage::response(
+                msg.id.clone(),
+                serde_json::json!({
+                    "success": true,
+                    "inputPath": file_path,
+                    "outputPath": output_path,
+                    "limit": limit,
+                    "is32Bit": is_32bit,
+                    "message": "转换完成"
+                }),
+            )
+        }
+        "preview_txt" => {
+            // 预览 txt 文件前N行（假数据）
+            let file_path = params
+                .and_then(|p| p.get("filePath"))
+                .and_then(|f| f.as_str())
+                .unwrap_or("");
+            let max_lines = params
+                .and_then(|p| p.get("maxLines"))
+                .and_then(|l| l.as_i64())
+                .unwrap_or(200);
+
+            info!("  ├─ Processing: preview_txt file={} maxLines={}", file_path, max_lines);
+
+            // 假数据：返回一些预览行
+            let lines = vec![
+                "libil2cpp.so[Cd][1]+0x1000 -> [0x7fff12345678]",
+                "libil2cpp.so[Cd][1]+0x1008 -> [0x7fff12345680]",
+                "libil2cpp.so[Cb][2]+0x200 -> [0x7fff23456789]",
+                "libil2cpp.so[Xa][3]+0x3000 -> [0x7fff34567890]",
+                "libunity.so[Cd][1]+0x500 -> [0x7fff45678901]",
+                "libc.so[Cd][1]+0x100 -> [0x7fff56789012]",
+                "libc.so[Cb][2]+0x200 -> [0x7fff67890123]",
+                "libm.so[Cb][1]+0x300 -> [0x7fff78901234]",
+            ];
+
+            WsMessage::response(
+                msg.id.clone(),
+                serde_json::json!({
+                    "success": true,
+                    "filePath": file_path,
+                    "totalLines": lines.len(),
+                    "lines": lines
+                }),
+            )
+        }
+        "debug_pointers" => {
+            // 批量调试指针（假数据）
+            let pointers = params
+                .and_then(|p| p.get("pointers"))
+                .and_then(|p| p.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+                .unwrap_or_else(|| vec![]);
+
+            info!("  ├─ Processing: debug_pointers count={}", pointers.len());
+
+            // 假数据：为每个指针链生成调试结果
+            let results: Vec<_> = pointers.iter().enumerate().map(|(i, ptr)| {
+                if ptr.contains("error") || ptr.is_empty() {
+                    serde_json::json!({
+                        "input": ptr,
+                        "error": "无效的指针格式"
+                    })
+                } else {
+                    // 模拟调试结果
+                    let base_addr = 0x7fff00000000u64 + (i as u64 * 0x10000);
+                    serde_json::json!({
+                        "input": ptr,
+                        "dword": format!("0x{:08x}", base_addr % 0xFFFFFFFF),
+                        "float": format!("{:.8}", (base_addr as f64 % 100.0) / 100.0),
+                        "trace": [
+                            format!("libUE4.so[Cd][1] = 0x{:x}", base_addr),
+                            format!("0x{:x}+0xffff = 0x{:x}", base_addr, base_addr + 0xffff),
+                            format!("0x{:x}+0x123 = 0x{:x}", base_addr + 0xffff, base_addr + 0xffff + 0x123),
+                            format!("0x{:x}+0x234 = 0x{:x}", base_addr + 0xffff + 0x123, base_addr + 0xffff + 0x123 + 0x234),
+                        ]
+                    })
+                }
+            }).collect();
+
+            WsMessage::response(
+                msg.id.clone(),
+                serde_json::json!({
+                    "success": true,
+                    "count": results.len(),
+                    "results": results
+                }),
+            )
+        }
         _ => {
             warn!("  ├─ Unknown command: {}", command);
             WsMessage::error(
