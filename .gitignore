@@ -48,3 +48,4 @@ app.*.map.json
 /android/build/reports/problems/problems-report.html
 /core/target/
 /core/Cargo.lock
+.cargo/
