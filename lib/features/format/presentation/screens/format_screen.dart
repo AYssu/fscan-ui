@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/network/ws_service.dart';
 
 /// 格式文件页面 - MD3 风格
@@ -54,7 +55,8 @@ class _FormatScreenState extends State<FormatScreen> {
 
     try {
       final wsService = context.read<WsService>();
-      final files = await wsService.getFiles('/sdcard/fscan/data', ['out', 'bin']);
+      final appConfig = context.read<AppConfig>();
+      final files = await wsService.getFiles(appConfig.dataPath, ['out', 'bin']);
 
       if (files != null && mounted) {
         setState(() {

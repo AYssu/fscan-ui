@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/network/ws_service.dart';
 
 /// 对比模式枚举
@@ -69,7 +70,6 @@ class _CompareScreenState extends State<CompareScreen> {
   String outputPath = '/storage/emulated/0/fscan/a1.txt';
 
   // 文件相关
-  String dataDir = '/sdcard/fscan/data';
   List<CompareFile> availableFiles = [];
   bool _isLoadingFiles = false;
 
@@ -100,7 +100,8 @@ class _CompareScreenState extends State<CompareScreen> {
 
     try {
       final wsService = context.read<WsService>();
-      final files = await wsService.getFiles(dataDir, ['out']);
+      final appConfig = context.read<AppConfig>();
+      final files = await wsService.getFiles(appConfig.dataPath, ['out']);
 
       if (files != null && mounted) {
         setState(() {

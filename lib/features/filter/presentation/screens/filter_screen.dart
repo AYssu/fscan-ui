@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
+import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/network/ws_service.dart';
 
 /// 文件数据模型
@@ -55,7 +56,6 @@ class _FilterScreenState extends State<FilterScreen> {
   String outputPath = '/storage/emulated/0/fscan/a1.txt';
 
   // 文件相关
-  String dataDir = '/sdcard/fscan/data';
   List<FilterFile> availableFiles = [];
   bool _isLoadingFiles = false;
 
@@ -75,7 +75,8 @@ class _FilterScreenState extends State<FilterScreen> {
 
     try {
       final wsService = context.read<WsService>();
-      final files = await wsService.getFiles(dataDir, ['txt']);
+      final appConfig = context.read<AppConfig>();
+      final files = await wsService.getFiles(appConfig.dataPath, ['txt']);
 
       if (files != null && mounted) {
         setState(() {

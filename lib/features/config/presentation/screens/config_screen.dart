@@ -1,7 +1,11 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:fscan/core/theme/theme_provider.dart';
+import 'package:fscan/core/theme/background_provider.dart';
+import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/network/ws_service.dart';
 import 'package:fscan/core/utils/logger.dart';
 import 'package:fscan/core/utils/cache_utils.dart';
@@ -66,10 +70,11 @@ class _ConfigScreenState extends State<ConfigScreen> {
           FilledButton(
             onPressed: () async {
               Navigator.pop(context);
+              final messenger = ScaffoldMessenger.of(context);
               await CacheUtils.clearAllCache();
               _loadCacheSize();
               if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
+                messenger.showSnackBar(
                   const SnackBar(content: Text('缓存已清空')),
                 );
               }
@@ -116,6 +121,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
 
             // 存储设置
             _buildStorageCard(context),
+            const SizedBox(height: 16),
+
+            // 背景设置
+            _buildBackgroundCard(context),
             const SizedBox(height: 16),
 
             // 日志
@@ -501,7 +510,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   /// 连接弹窗
   void _showConnectionDialog(BuildContext context, WsService wsService) {
     final urlController = TextEditingController(
-      text: 'ws://localhost:8080/ws',
+      text: wsService.url ?? 'ws://localhost:8080/ws',
     );
 
     showDialog(
@@ -721,39 +730,215 @@ class _ConfigScreenState extends State<ConfigScreen> {
 
   /// 存储设置卡片
   Widget _buildStorageCard(BuildContext context) {
-    return Card(
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
-              children: [
-                Icon(Icons.storage, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
-                Text('存储设置', style: Theme.of(context).textTheme.titleMedium),
-              ],
-            ),
+    return Consumer<AppConfig>(
+      builder: (context, appConfig, child) {
+        return Card(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.storage, color: Theme.of(context).colorScheme.primary),
+                    const SizedBox(width: 8),
+                    Text('存储设置', style: Theme.of(context).textTheme.titleMedium),
+                  ],
+                ),
+              ),
+              ListTile(
+                title: const Text('配置文件'),
+                subtitle: Text(
+                  appConfig.configPath,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+                trailing: const Icon(Icons.edit, size: 20),
+                onTap: () => _editPath(context, appConfig, '配置文件路径', appConfig.configPath, (path) => appConfig.setConfigPath(path)),
+              ),
+              const Divider(height: 1, indent: 16, endIndent: 16),
+              ListTile(
+                title: const Text('扫描数据'),
+                subtitle: Text(
+                  appConfig.dataPath,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                ),
+                trailing: const Icon(Icons.edit, size: 20),
+                onTap: () => _editPath(context, appConfig, '扫描数据路径', appConfig.dataPath, (path) => appConfig.setDataPath(path)),
+              ),
+              const Divider(height: 1, indent: 16, endIndent: 16),
+              ListTile(
+                title: const Text('缓存大小'),
+                trailing: Text(CacheUtils.formatSize(_cacheSize), style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+                onTap: _showClearCacheDialog,
+              ),
+            ],
           ),
-          ListTile(
-            title: const Text('配置文件'),
-            subtitle: const Text('/sdcard/fscan/config/'),
-            onTap: () {},
+        );
+      },
+    );
+  }
+
+  /// 编辑路径弹窗
+  void _editPath(BuildContext context, AppConfig appConfig, String title, String currentValue, Future<void> Function(String) onSave) {
+    final controller = TextEditingController(text: currentValue);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
           ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          ListTile(
-            title: const Text('扫描数据'),
-            subtitle: const Text('/sdcard/fscan/data/'),
-            onTap: () {},
+          style: const TextStyle(fontFamily: 'monospace'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
           ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          ListTile(
-            title: const Text('缓存大小'),
-            trailing: Text(CacheUtils.formatSize(_cacheSize), style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-            onTap: _showClearCacheDialog,
+          FilledButton(
+            onPressed: () async {
+              final path = controller.text.trim();
+              if (path.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('路径不能为空')),
+                );
+                return;
+              }
+              await onSave(path);
+              if (context.mounted) Navigator.pop(context);
+            },
+            child: const Text('确定'),
           ),
         ],
       ),
     );
+  }
+
+  /// 背景设置卡片
+  Widget _buildBackgroundCard(BuildContext context) {
+    return Consumer<BackgroundProvider>(
+      builder: (context, bgProvider, child) {
+        return Card(
+          child: ExpansionTile(
+            leading: Icon(Icons.wallpaper, color: Theme.of(context).colorScheme.primary),
+            title: Text('背景设置', style: Theme.of(context).textTheme.titleMedium),
+            subtitle: bgProvider.hasBackground
+                ? Text('已设置 · 背景${(bgProvider.opacity * 100).round()}% · 卡片${(bgProvider.cardOpacity * 100).round()}%',
+                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant))
+                : Text('未设置', style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            children: [
+              // 背景预览 / 点击选择
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: GestureDetector(
+                  onTap: () => _pickBackgroundImage(context, bgProvider),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: bgProvider.hasBackground
+                        ? Stack(
+                            children: [
+                              Opacity(
+                                opacity: bgProvider.opacity,
+                                child: Image.file(
+                                  File(bgProvider.imagePath!),
+                                  height: 120,
+                                  width: double.infinity,
+                                  fit: BoxFit.cover,
+                                ),
+                              ),
+                              Positioned(
+                                right: 4,
+                                top: 4,
+                                child: IconButton(
+                                  icon: const Icon(Icons.close, size: 18),
+                                  style: IconButton.styleFrom(
+                                    backgroundColor: Theme.of(context).colorScheme.surface.withValues(alpha: 0.8),
+                                  ),
+                                  onPressed: () => bgProvider.clear(),
+                                ),
+                              ),
+                            ],
+                          )
+                        : Container(
+                            height: 120,
+                            width: double.infinity,
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.add_photo_alternate, size: 36, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                const SizedBox(height: 8),
+                                Text('点击选择背景图片', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                              ],
+                            ),
+                          ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              // 背景透明度调节
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Row(
+                  children: [
+                    const Icon(Icons.opacity, size: 20),
+                    const SizedBox(width: 8),
+                    const Text('背景透明度'),
+                    const Spacer(),
+                    Text(
+                      '${(bgProvider.opacity * 100).round()}%',
+                      style: TextStyle(color: Theme.of(context).colorScheme.primary),
+                    ),
+                  ],
+                ),
+              ),
+              Slider(
+                value: bgProvider.opacity,
+                min: 0.05,
+                max: 1.0,
+                divisions: 19,
+                onChanged: (value) => bgProvider.setOpacity(value),
+              ),
+              const Divider(height: 1, indent: 16, endIndent: 16),
+              // 卡片透明度调节
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                child: Row(
+                  children: [
+                    const Icon(Icons.style, size: 20),
+                    const SizedBox(width: 8),
+                    const Text('卡片透明度'),
+                    const Spacer(),
+                    Text(
+                      '${(bgProvider.cardOpacity * 100).round()}%',
+                      style: TextStyle(color: Theme.of(context).colorScheme.primary),
+                    ),
+                  ],
+                ),
+              ),
+              Slider(
+                value: bgProvider.cardOpacity,
+                min: 0.3,
+                max: 1.0,
+                divisions: 14,
+                onChanged: (value) => bgProvider.setCardOpacity(value),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _pickBackgroundImage(BuildContext context, BackgroundProvider bgProvider) async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.image);
+    if (result != null && result.files.single.path != null) {
+      await bgProvider.setImage(result.files.single.path);
+    }
   }
 
   /// 日志卡片

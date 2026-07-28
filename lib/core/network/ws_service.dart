@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:fscan/core/utils/logger.dart';
 
@@ -79,9 +80,20 @@ class WsService extends ChangeNotifier {
 
   // Getters
   WsStatus get status => _status;
+  String? get url => _url;
   String? get errorMessage => _errorMessage;
   bool get isConnected => _status == WsStatus.connected;
   Stream<WsMessage> get messageStream => _messageController.stream;
+
+  /// 初始化，从本地存储加载 URL 并自动连接
+  Future<void> init() async {
+    final prefs = await SharedPreferences.getInstance();
+    _url = prefs.getString('ws_url');
+    if (_url != null && _url!.isNotEmpty) {
+      logger.info('WebSocket', '发现已保存的地址: $_url，自动连接');
+      await connect(_url!);
+    }
+  }
 
   /// 连接到 WebSocket 服务器
   Future<void> connect(String url) async {
@@ -90,6 +102,9 @@ class WsService extends ChangeNotifier {
     }
 
     _url = url;
+    // 保存 URL 到本地
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('ws_url', url);
     _status = WsStatus.connecting;
     _errorMessage = null;
     notifyListeners();

@@ -65,13 +65,13 @@ class CacheUtils {
     }
   }
 
-  /// 清空所有缓存（保留主题偏好）
+  /// 清空所有缓存（保留主题偏好和背景设置）
   static Future<void> clearAllCache() async {
     final prefs = await SharedPreferences.getInstance();
     final keys = prefs.getKeys();
 
-    // 需要保留的主题偏好
-    final keepKeys = {'isDarkMode', 'seedColor'};
+    // 需要保留的设置
+    final keepKeys = {'isDarkMode', 'seedColor', 'bg_imagePath', 'bg_opacity', 'bg_cardOpacity', 'ws_url', 'app_configPath', 'app_dataPath'};
 
     for (final key in keys) {
       if (!keepKeys.contains(key)) {

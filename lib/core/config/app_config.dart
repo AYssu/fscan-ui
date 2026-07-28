@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fscan/core/services/module_service.dart';
 import 'package:fscan/core/network/ws_service.dart';
 
@@ -11,6 +12,14 @@ class AppConfig extends ChangeNotifier {
   // 动态库地址
   String _libPath = '/data/local/tmp/libmemory.so';
   String get libPath => _libPath;
+
+  // 配置文件目录
+  String _configPath = '/sdcard/fscan/config';
+  String get configPath => _configPath;
+
+  // 扫描数据目录
+  String _dataPath = '/sdcard/fscan/data';
+  String get dataPath => _dataPath;
 
   // 进程包名
   String? _selectedPackageName;
@@ -41,6 +50,14 @@ class AppConfig extends ChangeNotifier {
   bool _modulesLoaded = false;
   bool get modulesLoaded => _modulesLoaded;
 
+  /// 初始化，从本地存储加载
+  Future<void> init() async {
+    final prefs = await SharedPreferences.getInstance();
+    _configPath = prefs.getString('app_configPath') ?? '/sdcard/fscan/config';
+    _dataPath = prefs.getString('app_dataPath') ?? '/sdcard/fscan/data';
+    notifyListeners();
+  }
+
   /// 设置读写方式
   void setRwMethod(int method) {
     _rwMethod = method;
@@ -51,6 +68,22 @@ class AppConfig extends ChangeNotifier {
   void setLibPath(String path) {
     _libPath = path;
     notifyListeners();
+  }
+
+  /// 设置配置文件目录
+  Future<void> setConfigPath(String path) async {
+    _configPath = path;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('app_configPath', path);
+  }
+
+  /// 设置扫描数据目录
+  Future<void> setDataPath(String path) async {
+    _dataPath = path;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('app_dataPath', path);
   }
 
   /// 设置选中的进程
