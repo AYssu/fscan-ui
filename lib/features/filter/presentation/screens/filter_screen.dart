@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 
 /// 文件数据模型
@@ -44,9 +43,6 @@ class _FilterScreenState extends State<FilterScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('基址过滤'),
-        actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: resetConfig),
-        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -407,29 +403,30 @@ class _FilterScreenState extends State<FilterScreen> {
                                 style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
                               ),
                             )
-                          : ListView.builder(
-                              itemCount: filteredFiles.length,
-                              itemBuilder: (context, index) {
-                                final file = filteredFiles[index];
-                                final isSelected = tempSelected == file;
-                                return RadioListTile<FilterFile>(
-                                  value: file,
-                                  groupValue: tempSelected,
-                                  onChanged: (value) {
-                                    setDialog(() => tempSelected = value);
-                                  },
-                                  title: Text(file.name, style: const TextStyle(fontFamily: 'monospace')),
-                                  subtitle: Text('${file.arch} | ${file.size} | ${file.date}'),
-                                  secondary: CircleAvatar(
-                                    backgroundColor: Theme.of(context).colorScheme.primary,
-                                    radius: 12,
-                                    child: Text(
-                                      file.arch == 'x64' ? '64' : file.arch == 'x86' ? '32' : 'A',
-                                      style: const TextStyle(fontSize: 10, color: Colors.white),
-                                    ),
-                                  ),
-                                );
+                          : RadioGroup<FilterFile>(
+                              groupValue: tempSelected,
+                              onChanged: (value) {
+                                setDialog(() => tempSelected = value);
                               },
+                              child: ListView.builder(
+                                itemCount: filteredFiles.length,
+                                itemBuilder: (context, index) {
+                                  final file = filteredFiles[index];
+                                  return RadioListTile<FilterFile>(
+                                    value: file,
+                                    title: Text(file.name, style: const TextStyle(fontFamily: 'monospace')),
+                                    subtitle: Text('${file.arch} | ${file.size} | ${file.date}'),
+                                    secondary: CircleAvatar(
+                                      backgroundColor: Theme.of(context).colorScheme.primary,
+                                      radius: 12,
+                                      child: Text(
+                                        file.arch == 'x64' ? '64' : file.arch == 'x86' ? '32' : 'A',
+                                        style: const TextStyle(fontSize: 10, color: Colors.white),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
                     ),
                   ],
@@ -488,16 +485,6 @@ class _FilterScreenState extends State<FilterScreen> {
         color: Theme.of(context).colorScheme.primary,
       ),
     );
-  }
-
-  /// 重置配置
-  void resetConfig() {
-    setState(() {
-      violentInitMaxDb = '无限制';
-      tempInit = true;
-      is32Bit = false;
-      selectedFile = null;
-    });
   }
 
   /// 开始过滤

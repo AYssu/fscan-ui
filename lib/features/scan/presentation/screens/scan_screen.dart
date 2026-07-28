@@ -45,12 +45,6 @@ class _ScanScreenState extends State<ScanScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('基址搜索'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: resetConfig,
-          ),
-        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -448,7 +442,7 @@ class _ScanScreenState extends State<ScanScreen> {
               style: TextStyle(
                 color: context.watch<AppConfig>().canReadProtected
                     ? null
-                    : Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
+                    : Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
               ),
             ),
             value: readProtected,
@@ -608,7 +602,7 @@ class _ScanScreenState extends State<ScanScreen> {
                         hintText: hintText,
                         hintStyle: TextStyle(
                           fontFamily: 'monospace',
-                          color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
+                          color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                         ),
                         prefixText: '0x ',
                         prefixStyle: TextStyle(
@@ -648,10 +642,11 @@ class _ScanScreenState extends State<ScanScreen> {
                             return;
                           }
 
-                          // 验证地址范围
-                          final addrValue = int.parse(addr, radix: 16);
-                          final maxValueInt = int.parse(maxValue, radix: 16);
-                          if (addrValue > maxValueInt) {
+                          // 验证地址范围（使用字符串比较避免整数溢出）
+                          final addrUpper = addr.toUpperCase();
+                          final maxUpper = maxValue.toUpperCase();
+                          if (addrUpper.length > maxUpper.length ||
+                              (addrUpper.length == maxUpper.length && addrUpper.compareTo(maxUpper) > 0)) {
                             setDialog(() => errorMessage = '地址超出范围');
                             return;
                           }
@@ -898,7 +893,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
   void openModuleSelector() {
     // 临时选中列表
-    List<ModuleItem> tempSelected = List<ModuleItem>.from(selectedModules ?? []);
+    List<ModuleItem> tempSelected = List<ModuleItem>.from(selectedModules);
     String searchText = '';
 
     showDialog(
@@ -1115,24 +1110,6 @@ class _ScanScreenState extends State<ScanScreen> {
         color: Theme.of(context).colorScheme.primary,
       ),
     );
-  }
-
-  void resetConfig() {
-    setState(() {
-      searchAddresses.clear();
-      scanLevel = 6;
-      scanRange = '0x7D0';
-      selectedModules.clear();
-      handlePageFault = false;
-      is32Bit = false;
-      byteAlignment = false;
-      pageAlignment = false;
-      scanCores = 8;
-      moduleExtension = false;
-      negativeOffset = false;
-      isFastMode = false;
-      readProtected = false;
-    });
   }
 
   void startScan() {

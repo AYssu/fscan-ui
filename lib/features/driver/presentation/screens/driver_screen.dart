@@ -64,9 +64,6 @@ class _DriverScreenState extends State<DriverScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('基础配置'),
-        actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: resetConfig),
-        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -134,7 +131,7 @@ class _DriverScreenState extends State<DriverScreen> {
                   icon: Icon(
                     Icons.refresh,
                     color: processMonitor
-                        ? Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.3)
+                        ? Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.3)
                         : Theme.of(context).colorScheme.primary,
                   ),
                   onPressed: processMonitor ? null : refreshPid,
@@ -150,7 +147,7 @@ class _DriverScreenState extends State<DriverScreen> {
                     decoration: InputDecoration(
                       hintText: '输入PID',
                       hintStyle: TextStyle(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
+                        color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                       ),
                       border: const OutlineInputBorder(),
                       contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -497,7 +494,6 @@ class _DriverScreenState extends State<DriverScreen> {
   /// 功能设置卡片
   Widget _buildFunctionCard() {
     final appConfig = context.watch<AppConfig>();
-    final isCustom = appConfig.rwMethod == 2;
 
     return Card(
       child: Column(
@@ -587,31 +583,33 @@ class _DriverScreenState extends State<DriverScreen> {
                     ),
                     const SizedBox(height: 12),
                     Expanded(
-                      child: ListView.builder(
-                        itemCount: filteredProcesses.length,
-                        itemBuilder: (context, index) {
-                          final process = filteredProcesses[index];
-                          return RadioListTile<ProcessInfo>(
-                            value: process,
-                            groupValue: tempSelected,
-                            onChanged: (value) {
-                              setDialog(() => tempSelected = value);
-                            },
-                            title: Text(
-                              process.packageName,
-                              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                            ),
-                            subtitle: Text('${process.arch} | PID: ${process.pid}'),
-                            secondary: CircleAvatar(
-                              backgroundColor: Theme.of(context).colorScheme.primary,
-                              radius: 14,
-                              child: Text(
-                                process.arch == 'x64' ? '64' : '32',
-                                style: const TextStyle(fontSize: 10, color: Colors.white),
-                              ),
-                            ),
-                          );
+                      child: RadioGroup<ProcessInfo>(
+                        groupValue: tempSelected,
+                        onChanged: (value) {
+                          setDialog(() => tempSelected = value);
                         },
+                        child: ListView.builder(
+                          itemCount: filteredProcesses.length,
+                          itemBuilder: (context, index) {
+                            final process = filteredProcesses[index];
+                            return RadioListTile<ProcessInfo>(
+                              value: process,
+                              title: Text(
+                                process.packageName,
+                                style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                              ),
+                              subtitle: Text('${process.arch} | PID: ${process.pid}'),
+                              secondary: CircleAvatar(
+                                backgroundColor: Theme.of(context).colorScheme.primary,
+                                radius: 14,
+                                child: Text(
+                                  process.arch == 'x64' ? '64' : '32',
+                                  style: const TextStyle(fontSize: 10, color: Colors.white),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ),
                   ],
@@ -626,7 +624,7 @@ class _DriverScreenState extends State<DriverScreen> {
                   onPressed: () {
                     setState(() {
                       selectedProcess = tempSelected;
-                      pidInput = '';
+                      pidInput = tempSelected?.pid.toString() ?? '';
                       restartRequired = true;
                     });
                     Navigator.pop(context);
@@ -685,40 +683,32 @@ class _DriverScreenState extends State<DriverScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('读写方式'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RadioListTile<int>(
-              title: const Text('SYSCALL'),
-              subtitle: const Text('系统调用，最通用'),
-              value: 0,
-              groupValue: context.read<AppConfig>().rwMethod,
-              onChanged: (v) {
-                context.read<AppConfig>().setRwMethod(v!);
-                Navigator.pop(context);
-              },
-            ),
-            RadioListTile<int>(
-              title: const Text('PREAD64'),
-              subtitle: const Text('/proc/pid/mem'),
-              value: 1,
-              groupValue: context.read<AppConfig>().rwMethod,
-              onChanged: (v) {
-                context.read<AppConfig>().setRwMethod(v!);
-                Navigator.pop(context);
-              },
-            ),
-            RadioListTile<int>(
-              title: const Text('CUSTOM'),
-              subtitle: const Text('自定义动态库'),
-              value: 2,
-              groupValue: context.read<AppConfig>().rwMethod,
-              onChanged: (v) {
-                context.read<AppConfig>().setRwMethod(v!);
-                Navigator.pop(context);
-              },
-            ),
-          ],
+        content: RadioGroup<int>(
+          groupValue: context.read<AppConfig>().rwMethod,
+          onChanged: (v) {
+            context.read<AppConfig>().setRwMethod(v!);
+            Navigator.pop(context);
+          },
+          child: const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              RadioListTile<int>(
+                title: Text('SYSCALL'),
+                subtitle: Text('系统调用，最通用'),
+                value: 0,
+              ),
+              RadioListTile<int>(
+                title: Text('PREAD64'),
+                subtitle: Text('/proc/pid/mem'),
+                value: 1,
+              ),
+              RadioListTile<int>(
+                title: Text('CUSTOM'),
+                subtitle: Text('自定义动态库'),
+                value: 2,
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
@@ -754,18 +744,5 @@ class _DriverScreenState extends State<DriverScreen> {
         ],
       ),
     );
-  }
-
-  void resetConfig() {
-    final appConfig = context.read<AppConfig>();
-    setState(() {
-      selectedProcess = null;
-      pidInput = '';
-      processMonitor = false;
-      restartRequired = false;
-      memoryRanges.updateAll((key, _) => false);
-      appConfig.setRwMethod(0);
-      appConfig.setLibPath('/data/local/tmp/libmemory.so');
-    });
   }
 }

@@ -38,7 +38,11 @@ dependencies:
   flutter_screenutil: ^5.9.3
   google_fonts: ^8.2.0
   shimmer: ^3.0.0
+  shared_preferences: ^2.5.3
   provider: ^6.1.5+1
+  web_socket_channel: ^3.0.3
+  path_provider: ^2.1.5
+  crypto: ^3.0.6
 
 dev_dependencies:
   flutter_test:
@@ -51,11 +55,15 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^4.0.0
 
+  flutter_launcher_icons: ^0.14.3
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
 # The following section is specific to Flutter packages.
 flutter:
+  assets:
+    - assets/
 
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
@@ -92,3 +100,15 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  web:
+    generate: true
+    image_path: "assets/icon.png"
+    background_color: "#000000"
+    theme_color: "#000000"
+  image_path: "assets/icon.png"
+  adaptive_icon_background: "#000000"
+  adaptive_icon_foreground: "assets/icon.png"

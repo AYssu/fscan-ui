@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 
 /// 对比模式枚举
@@ -72,9 +71,6 @@ class _CompareScreenState extends State<CompareScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('基址对比'),
-        actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: resetConfig),
-        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -373,7 +369,7 @@ class _CompareScreenState extends State<CompareScreen> {
                                 ? BoxDecoration(
                                     border: Border(
                                       bottom: BorderSide(
-                                        color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.3),
+                                        color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.3),
                                       ),
                                     ),
                                   )
@@ -962,21 +958,6 @@ class _CompareScreenState extends State<CompareScreen> {
         );
       },
     );
-  }
-
-  /// 重置配置
-  void resetConfig() {
-    setState(() {
-      compareMode = CompareMode.basic;
-      levelLimit = '无限制';
-      maxDbNum = '无限制';
-      threadNum = 8;
-      indexCheck = true;
-      nopLevel = 0;
-      matchOptimize = true;
-      is32Bit = false;
-      selectedFiles.clear();
-    });
   }
 
   /// 开始对比

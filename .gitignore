@@ -44,3 +44,7 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 .metadata
+/pubspec.lock
+/android/build/reports/problems/problems-report.html
+/core/target/
+/core/Cargo.lock

@@ -5,6 +5,13 @@ allprojects {
     }
 }
 
+subprojects {
+    // 在项目评估前应用 Kotlin 插件，解决 jni 包兼容性问题
+    pluginManager.withPlugin("com.android.library") {
+        pluginManager.apply("org.jetbrains.kotlin.android")
+    }
+}
+
 val newBuildDir: Directory =
     rootProject.layout.buildDirectory
         .dir("../../build")

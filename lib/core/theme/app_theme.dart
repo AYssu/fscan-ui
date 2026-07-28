@@ -6,12 +6,12 @@ class AppTheme {
   AppTheme._();
 
   /// 亮色主题
-  static ThemeData lightTheme() {
+  static ThemeData lightTheme({Color seedColor = Colors.blue}) {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: Colors.blue,
+        seedColor: seedColor,
         brightness: Brightness.light,
       ),
       scaffoldBackgroundColor: Colors.grey.shade50,
@@ -45,7 +45,7 @@ class AppTheme {
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return Colors.blue;
+            return seedColor;
           }
           return Colors.grey.shade300;
         }),
@@ -60,12 +60,12 @@ class AppTheme {
   }
 
   /// 暗色主题
-  static ThemeData darkTheme() {
+  static ThemeData darkTheme({Color seedColor = Colors.blue}) {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
       colorScheme: ColorScheme.fromSeed(
-        seedColor: Colors.blue,
+        seedColor: seedColor,
         brightness: Brightness.dark,
       ),
       scaffoldBackgroundColor: const Color(0xFF121212),
@@ -102,7 +102,7 @@ class AppTheme {
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return Colors.blue;
+            return seedColor;
           }
           return Colors.grey.shade700;
         }),

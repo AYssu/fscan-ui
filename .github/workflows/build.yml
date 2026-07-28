@@ -27,6 +27,12 @@ jobs:
       - name: Install dependencies
         run: flutter pub upgrade
 
+      - name: Clean build
+        run: flutter clean
+
+      - name: Get dependencies
+        run: flutter pub get
+
       - name: Build APK (debug signed)
         run: flutter build apk --release
 
