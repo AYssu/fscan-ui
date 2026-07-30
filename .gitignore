@@ -49,3 +49,4 @@ app.*.map.json
 /core/target/
 /core/Cargo.lock
 .cargo/
+core-fs/

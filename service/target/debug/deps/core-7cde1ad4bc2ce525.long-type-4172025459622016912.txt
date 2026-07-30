@@ -1,0 +1,1 @@
+hashbrown::map::HashMap<std::string::String, Arc<(dyn CommandHandler + 'static)>, RandomState>
