@@ -50,3 +50,4 @@ app.*.map.json
 /core/Cargo.lock
 .cargo/
 core-fs/
+service/target/

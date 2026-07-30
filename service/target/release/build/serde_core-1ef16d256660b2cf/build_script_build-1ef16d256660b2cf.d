@@ -1,5 +1,0 @@
-/home/sking/AndroidStudioProjects/fscan/core/target/release/build/serde_core-1ef16d256660b2cf/build_script_build-1ef16d256660b2cf.d: /home/sking/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.229/build.rs
-
-/home/sking/AndroidStudioProjects/fscan/core/target/release/build/serde_core-1ef16d256660b2cf/build_script_build-1ef16d256660b2cf: /home/sking/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.229/build.rs
-
-/home/sking/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_core-1.0.229/build.rs:
