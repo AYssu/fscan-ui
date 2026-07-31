@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fscan/core/services/module_service.dart';
 import 'package:fscan/core/network/ws_service.dart';
+import 'package:fscan/core/utils/logger.dart';
 
 /// 全局配置状态
 class AppConfig extends ChangeNotifier {
@@ -55,6 +56,18 @@ class AppConfig extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _configPath = prefs.getString('app_configPath') ?? '/sdcard/fscan/config';
     _dataPath = prefs.getString('app_dataPath') ?? '/sdcard/fscan/data';
+
+    // 加载保存的进程配置
+    final savedPackage = prefs.getString('selected_process_package');
+    final savedArch = prefs.getString('selected_process_arch') ?? 'x64';
+    final savedPid = prefs.getInt('selected_process_pid') ?? 0;
+
+    if (savedPackage != null && savedPackage.isNotEmpty) {
+      _selectedPackageName = savedPackage;
+      _selectedPid = savedPid;
+      logger.info('AppConfig', '加载保存的进程配置: $savedPackage (PID: $savedPid)');
+    }
+
     notifyListeners();
   }
 

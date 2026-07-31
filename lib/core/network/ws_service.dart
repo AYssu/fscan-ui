@@ -18,6 +18,7 @@ enum WsMessageType {
   heartbeat,    // 心跳
   command,      // 指令
   response,     // 响应
+  stream,       // 流式输出
   error,        // 错误
 }
 
@@ -65,7 +66,7 @@ class WsService extends ChangeNotifier {
   String? _errorMessage;
   int _reconnectAttempts = 0;
   static const int maxReconnectAttempts = 5;
-  static const Duration heartbeatInterval = Duration(seconds: 30);
+  static const Duration heartbeatInterval = Duration(seconds: 10);
   static const Duration reconnectDelay = Duration(seconds: 3);
 
   // 消息流控制器
@@ -100,6 +101,12 @@ class WsService extends ChangeNotifier {
     if (_status == WsStatus.connecting || _status == WsStatus.connected) {
       return;
     }
+
+    // 取消旧的连接
+    _subscription?.cancel();
+    _subscription = null;
+    _channel?.sink.close();
+    _channel = null;
 
     _url = url;
     // 保存 URL 到本地
@@ -228,12 +235,254 @@ class WsService extends ChangeNotifier {
   }
 
   String? _loginRequestId;
+  String? _getAppsRequestId;
+  String? _getAppInfoRequestId;
+  String? _getNextFileRequestId;
+  String? _startScanRequestId;
   String? _getProcessesRequestId;
   String? _getModulesRequestId;
   String? _getFilesRequestId;
   String? _convertFormatRequestId;
   String? _previewConvertedRequestId;
   String? _debugPointersRequestId;
+
+  /// 获取运行中的应用列表（通过执行外部scan命令）
+  Future<List<Map<String, dynamic>>?> getApps() async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法获取应用列表');
+      return null;
+    }
+
+    final completer = Completer<List<Map<String, dynamic>>?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _getAppsRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['apps'] != null) {
+            final apps = (data['apps'] as List)
+                .map((e) => e as Map<String, dynamic>)
+                .toList();
+            completer.complete(apps);
+          } else {
+            completer.complete([]);
+          }
+        } else {
+          completer.complete([]);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _getAppsRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'get_apps',
+      },
+      id: _getAppsRequestId,
+    ));
+
+    // 超时处理（外部命令可能需要较长时间）
+    Timer(const Duration(seconds: 30), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 根据包名获取应用信息（包括PID）
+  Future<Map<String, dynamic>?> getAppInfo(String packageName) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法获取应用信息');
+      return null;
+    }
+
+    final completer = Completer<Map<String, dynamic>?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _getAppInfoRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true) {
+            completer.complete(data);
+          } else {
+            completer.complete(null);
+          }
+        } else {
+          completer.complete(null);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _getAppInfoRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'get_app_info',
+        'params': {
+          'packageName': packageName,
+        },
+      },
+      id: _getAppInfoRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 15), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 获取下一个可用的输出文件路径
+  Future<String?> getNextFile(String dir, String extension) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法获取下一个文件路径');
+      return null;
+    }
+
+    final completer = Completer<String?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _getNextFileRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['path'] != null) {
+            completer.complete(data['path'] as String);
+          } else {
+            completer.complete(null);
+          }
+        } else {
+          completer.complete(null);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _getNextFileRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'get_next_file',
+        'params': {
+          'dir': dir,
+          'extension': extension,
+        },
+      },
+      id: _getNextFileRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 15), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 启动扫描任务
+  Future<String?> startScan({
+    required String? packageName,
+    required int? pid,
+    required List<String> addresses,
+    required int depth,
+    required int offset,
+    required String outputFile,
+    required int count,
+    required int size,
+    required List<String> ranges,
+    required bool fastMode,
+    required bool pageFault,
+    String? reader,
+  }) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法启动扫描');
+      return null;
+    }
+
+    final completer = Completer<String?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _startScanRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['taskId'] != null) {
+            completer.complete(data['taskId'] as String);
+          } else {
+            completer.complete(null);
+          }
+        } else {
+          completer.complete(null);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _startScanRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    final params = {
+      'addresses': addresses,
+      'depth': depth,
+      'offset': offset,
+      'outputFile': outputFile,
+      'count': count,
+      'size': size,
+      'ranges': ranges,
+      'fastMode': fastMode,
+      'pageFault': pageFault,
+    };
+
+    if (packageName != null) {
+      params['packageName'] = packageName;
+    } else if (pid != null) {
+      params['pid'] = pid;
+    }
+
+    if (reader != null) {
+      params['reader'] = reader;
+    }
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'start_scan',
+        'params': params,
+      },
+      id: _startScanRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 10), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
 
   /// 获取进程列表
   Future<List<Map<String, dynamic>>?> getProcesses() async {
@@ -592,6 +841,10 @@ class WsService extends ChangeNotifier {
   /// 处理断开连接
   void _handleDisconnected() {
     if (_status == WsStatus.connected) {
+      // 先取消旧的subscription
+      _subscription?.cancel();
+      _subscription = null;
+
       _status = WsStatus.disconnected;
       notifyListeners();
       onDisconnected?.call();

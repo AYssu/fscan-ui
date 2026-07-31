@@ -1,3 +1,5 @@
+mod handlers;
+
 use futures_util::{SinkExt, StreamExt};
 use log::{error, info, warn, debug};
 use serde::{Deserialize, Serialize};
@@ -16,6 +18,7 @@ pub enum MessageType {
     HeartbeatAck,
     Command,
     Response,
+    Stream,
     Error,
 }
 
@@ -66,6 +69,14 @@ impl WsMessage {
         }
     }
 
+    pub fn stream(id: Option<String>, line: &str) -> Self {
+        Self {
+            msg_type: MessageType::Stream,
+            id,
+            data: Some(serde_json::json!({ "line": line })),
+        }
+    }
+
     pub fn encode(&self) -> String {
         serde_json::to_string(self).unwrap_or_default()
     }
@@ -80,12 +91,11 @@ enum CommandHandler {
     Ping,
     Status,
     Login,
-    GetProcesses,
+    GetApps,
+    GetAppInfo,
     GetModules,
-    GetFiles,
-    ConvertFormat,
-    PreviewTxt,
-    DebugPointers,
+    GetNextFile,
+    StartScan,
 }
 
 impl CommandHandler {
@@ -138,21 +148,88 @@ impl CommandHandler {
                     WsMessage::error(id, "账号或密码错误")
                 }
             }
-            Self::GetProcesses => {
-                info!("  ├─ Processing: get_processes");
-                WsMessage::response(
-                    id,
-                    serde_json::json!({
-                        "success": true,
-                        "processes": [
-                            { "packageName": "com.tencent.tmgp.sgame", "arch": "x64", "pid": 12345 },
-                            { "packageName": "com.miHoYo.Yuanshen", "arch": "x64", "pid": 23456 },
-                            { "packageName": "com.netease.g93na", "arch": "x64", "pid": 34567 },
-                            { "packageName": "com.tencent.ig", "arch": "x64", "pid": 45678 },
-                            { "packageName": "com.activision.callofduty.shooter", "arch": "arm64", "pid": 56789 }
-                        ]
-                    }),
-                )
+            Self::GetApps => {
+                info!("  ├─ Processing: get_apps");
+                match handlers::get_running_apps() {
+                    Ok(apps) => {
+                        let apps_json: Vec<_> = apps
+                            .iter()
+                            .map(|app| {
+                                serde_json::json!({
+                                    "packageName": app.package_name,
+                                    "pid": app.pid,
+                                    "arch": app.arch
+                                })
+                            })
+                            .collect();
+                        WsMessage::response(
+                            id,
+                            serde_json::json!({
+                                "success": true,
+                                "apps": apps_json,
+                                "count": apps.len()
+                            }),
+                        )
+                    }
+                    Err(e) => {
+                        info!("  ├─ Get apps failed: {}", e);
+                        WsMessage::error(id, &format!("Failed to get apps: {}", e))
+                    }
+                }
+            }
+            Self::GetAppInfo => {
+                let package_name = params
+                    .and_then(|p| p.get("packageName"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("");
+
+                info!("  ├─ Processing: get_app_info package={}", package_name);
+
+                match handlers::get_app_info(package_name) {
+                    Ok(app_info) => {
+                        WsMessage::response(
+                            id,
+                            serde_json::json!({
+                                "success": true,
+                                "packageName": app_info.package_name,
+                                "pid": app_info.pid,
+                                "arch": app_info.arch
+                            }),
+                        )
+                    }
+                    Err(e) => {
+                        info!("  ├─ Get app info failed: {}", e);
+                        WsMessage::error(id, &format!("Failed to get app info: {}", e))
+                    }
+                }
+            }
+            Self::GetNextFile => {
+                let dir = params
+                    .and_then(|p| p.get("dir"))
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("/sdcard/fscan");
+                let extension = params
+                    .and_then(|p| p.get("extension"))
+                    .and_then(|e| e.as_str())
+                    .unwrap_or("out");
+
+                info!("  ├─ Processing: get_next_file dir={} ext={}", dir, extension);
+
+                match handlers::get_next_file_path(dir, extension) {
+                    Ok(path) => {
+                        WsMessage::response(
+                            id,
+                            serde_json::json!({
+                                "success": true,
+                                "path": path
+                            }),
+                        )
+                    }
+                    Err(e) => {
+                        info!("  ├─ Get next file failed: {}", e);
+                        WsMessage::error(id, &format!("Failed to get next file: {}", e))
+                    }
+                }
             }
             Self::GetModules => {
                 let package_name = params
@@ -162,262 +239,38 @@ impl CommandHandler {
 
                 info!("  ├─ Processing: get_modules package={}", package_name);
 
-                let modules = match package_name {
-                    "com.tencent.tmgp.sgame" => {
-                        serde_json::json!([
-                            {"name": "libil2cpp.so", "index": "1", "type": "Cd", "startAddress": "0x100000", "endAddress": "0x250000"},
-                            {"name": "libil2cpp.so", "index": "2", "type": "Cb", "startAddress": "0x250000", "endAddress": "0x2A0000"},
-                            {"name": "libil2cpp.so", "index": "3", "type": "Xa", "startAddress": "0x2A0000", "endAddress": "0x500000"},
-                            {"name": "libunity.so", "index": "1", "type": "Cd", "startAddress": "0x500000", "endAddress": "0x580000"},
-                            {"name": "libunity.so", "index": "2", "type": "Xa", "startAddress": "0x580000", "endAddress": "0x620000"},
-                            {"name": "libc.so", "index": "1", "type": "Cd", "startAddress": "0x700000", "endAddress": "0x720000"},
-                            {"name": "libc.so", "index": "2", "type": "Cb", "startAddress": "0x720000", "endAddress": "0x740000"}
-                        ])
-                    }
-                    "com.miHoYo.Yuanshen" => {
-                        serde_json::json!([
-                            {"name": "libil2cpp.so", "index": "1", "type": "Cd", "startAddress": "0x800000", "endAddress": "0xA00000"},
-                            {"name": "libil2cpp.so", "index": "2", "type": "Cb", "startAddress": "0xA00000", "endAddress": "0xA80000"},
-                            {"name": "libil2cpp.so", "index": "3", "type": "Xa", "startAddress": "0xA80000", "endAddress": "0xD00000"},
-                            {"name": "libunity.so", "index": "1", "type": "Cd", "startAddress": "0xD00000", "endAddress": "0xD80000"},
-                            {"name": "libnative.so", "index": "1", "type": "Xa", "startAddress": "0xE00000", "endAddress": "0xE80000"},
-                            {"name": "libmihoyo.so", "index": "1", "type": "Cd", "startAddress": "0xF00000", "endAddress": "0xF50000"},
-                            {"name": "libc.so", "index": "1", "type": "Cd", "startAddress": "0x1000000", "endAddress": "0x1020000"},
-                            {"name": "libdl.so", "index": "1", "type": "Cb", "startAddress": "0x1020000", "endAddress": "0x1030000"}
-                        ])
-                    }
-                    "com.netease.g93na" => {
-                        serde_json::json!([
-                            {"name": "libgame.so", "index": "1", "type": "Cd", "startAddress": "0x1100000", "endAddress": "0x1200000"},
-                            {"name": "libgame.so", "index": "2", "type": "Xa", "startAddress": "0x1200000", "endAddress": "0x1350000"},
-                            {"name": "libunity.so", "index": "1", "type": "Cd", "startAddress": "0x1400000", "endAddress": "0x1480000"},
-                            {"name": "libc.so", "index": "1", "type": "Cd", "startAddress": "0x1500000", "endAddress": "0x1520000"}
-                        ])
-                    }
-                    "com.tencent.ig" => {
-                        serde_json::json!([
-                            {"name": "libtersafe2.so", "index": "1", "type": "Cd", "startAddress": "0x1600000", "endAddress": "0x1700000"},
-                            {"name": "libUE4.so", "index": "1", "type": "Cd", "startAddress": "0x1700000", "endAddress": "0x1A00000"},
-                            {"name": "libUE4.so", "index": "2", "type": "Cb", "startAddress": "0x1A00000", "endAddress": "0x1A80000"},
-                            {"name": "libUE4.so", "index": "3", "type": "Xa", "startAddress": "0x1A80000", "endAddress": "0x2000000"},
-                            {"name": "libc.so", "index": "1", "type": "Cd", "startAddress": "0x2100000", "endAddress": "0x2120000"}
-                        ])
-                    }
-                    "com.activision.callofduty.shooter" => {
-                        serde_json::json!([
-                            {"name": "libil2cpp.so", "index": "1", "type": "Cd", "startAddress": "0x2200000", "endAddress": "0x2400000"},
-                            {"name": "libil2cpp.so", "index": "2", "type": "Xa", "startAddress": "0x2400000", "endAddress": "0x2700000"},
-                            {"name": "libnative.so", "index": "1", "type": "Xa", "startAddress": "0x2800000", "endAddress": "0x2900000"},
-                            {"name": "libc.so", "index": "1", "type": "Cd", "startAddress": "0x2A00000", "endAddress": "0x2A20000"}
-                        ])
-                    }
-                    _ => {
-                        serde_json::json!([
-                            {"name": "libmain.so", "index": "1", "type": "Cd", "startAddress": "0x3000000", "endAddress": "0x3100000"},
-                            {"name": "libc.so", "index": "1", "type": "Cd", "startAddress": "0x3200000", "endAddress": "0x3220000"}
-                        ])
-                    }
-                };
-
-                WsMessage::response(
-                    id,
-                    serde_json::json!({
-                        "success": true,
-                        "packageName": package_name,
-                        "modules": modules
-                    }),
-                )
-            }
-            Self::GetFiles => {
-                let dir = params
-                    .and_then(|p| p.get("dir"))
-                    .and_then(|d| d.as_str())
-                    .unwrap_or("/sdcard/fscan/data");
-                let extensions = params
-                    .and_then(|p| p.get("extensions"))
-                    .and_then(|e| e.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
-                    .unwrap_or_else(|| vec!["out", "txt"]);
-
-                info!("  ├─ Processing: get_files dir={} extensions={:?}", dir, extensions);
-
-                let all_files = vec![
-                    serde_json::json!({
-                        "name": "scan_result_20260726.out",
-                        "path": "/sdcard/fscan/data/scan_result_20260726.out",
-                        "size": 1258291,
-                        "modified": "2026-07-26 14:30:22",
-                        "extension": "out",
-                        "arch": "x64"
-                    }),
-                    serde_json::json!({
-                        "name": "scan_result_20260725.out",
-                        "path": "/sdcard/fscan/data/scan_result_20260725.out",
-                        "size": 892416,
-                        "modified": "2026-07-25 18:15:45",
-                        "extension": "out",
-                        "arch": "arm64"
-                    }),
-                    serde_json::json!({
-                        "name": "pointer_list.txt",
-                        "path": "/sdcard/fscan/data/pointer_list.txt",
-                        "size": 45678,
-                        "modified": "2026-07-26 10:22:11",
-                        "extension": "txt"
-                    }),
-                    serde_json::json!({
-                        "name": "game_data.txt",
-                        "path": "/sdcard/fscan/data/game_data.txt",
-                        "size": 234567,
-                        "modified": "2026-07-24 09:45:33",
-                        "extension": "txt"
-                    }),
-                    serde_json::json!({
-                        "name": "base_address.out",
-                        "path": "/sdcard/fscan/data/base_address.out",
-                        "size": 67890,
-                        "modified": "2026-07-23 16:58:12",
-                        "extension": "out",
-                        "arch": "x86"
-                    }),
-                ];
-
-                let files: Vec<_> = all_files
-                    .into_iter()
-                    .filter(|f| {
-                        let ext = f.get("extension").and_then(|e| e.as_str()).unwrap_or("");
-                        extensions.contains(&ext)
-                    })
-                    .collect();
-
-                WsMessage::response(
-                    id,
-                    serde_json::json!({
-                        "success": true,
-                        "dir": dir,
-                        "extensions": extensions,
-                        "files": files
-                    }),
-                )
-            }
-            Self::ConvertFormat => {
-                let file_path = params
-                    .and_then(|p| p.get("filePath"))
-                    .and_then(|f| f.as_str())
-                    .unwrap_or("");
-                let limit = params
-                    .and_then(|p| p.get("limit"))
-                    .and_then(|l| l.as_i64())
-                    .unwrap_or(300000000);
-                let is_32bit = params
-                    .and_then(|p| p.get("is32Bit"))
-                    .and_then(|b| b.as_bool())
-                    .unwrap_or(false);
-
-                info!(
-                    "  ├─ Processing: convert_format file={} limit={} is32bit={}",
-                    file_path, limit, is_32bit
-                );
-
-                let output_path = if file_path.ends_with(".out") {
-                    file_path.replace(".out", ".txt")
-                } else if file_path.ends_with(".bin") {
-                    file_path.replace(".bin", ".txt")
-                } else {
-                    format!("{}.txt", file_path)
-                };
-
-                WsMessage::response(
-                    id,
-                    serde_json::json!({
-                        "success": true,
-                        "inputPath": file_path,
-                        "outputPath": output_path,
-                        "limit": limit,
-                        "is32Bit": is_32bit,
-                        "message": "转换完成"
-                    }),
-                )
-            }
-            Self::PreviewTxt => {
-                let file_path = params
-                    .and_then(|p| p.get("filePath"))
-                    .and_then(|f| f.as_str())
-                    .unwrap_or("");
-                let max_lines = params
-                    .and_then(|p| p.get("maxLines"))
-                    .and_then(|l| l.as_i64())
-                    .unwrap_or(200);
-
-                info!(
-                    "  ├─ Processing: preview_txt file={} maxLines={}",
-                    file_path, max_lines
-                );
-
-                let lines = vec![
-                    "libil2cpp.so[Cd][1]+0x1000 -> [0x7fff12345678]",
-                    "libil2cpp.so[Cd][1]+0x1008 -> [0x7fff12345680]",
-                    "libil2cpp.so[Cb][2]+0x200 -> [0x7fff23456789]",
-                    "libil2cpp.so[Xa][3]+0x3000 -> [0x7fff34567890]",
-                    "libunity.so[Cd][1]+0x500 -> [0x7fff45678901]",
-                    "libc.so[Cd][1]+0x100 -> [0x7fff56789012]",
-                    "libc.so[Cb][2]+0x200 -> [0x7fff67890123]",
-                    "libm.so[Cb][1]+0x300 -> [0x7fff78901234]",
-                ];
-
-                WsMessage::response(
-                    id,
-                    serde_json::json!({
-                        "success": true,
-                        "filePath": file_path,
-                        "totalLines": lines.len(),
-                        "lines": lines
-                    }),
-                )
-            }
-            Self::DebugPointers => {
-                let pointers = params
-                    .and_then(|p| p.get("pointers"))
-                    .and_then(|p| p.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
-                    .unwrap_or_default();
-
-                info!("  ├─ Processing: debug_pointers count={}", pointers.len());
-
-                let results: Vec<_> = pointers
-                    .iter()
-                    .enumerate()
-                    .map(|(i, ptr)| {
-                        if ptr.contains("error") || ptr.is_empty() {
-                            serde_json::json!({
-                                "input": ptr,
-                                "error": "无效的指针格式"
+                match handlers::get_process_modules(package_name) {
+                    Ok(modules) => {
+                        let modules_json: Vec<_> = modules
+                            .iter()
+                            .map(|m| {
+                                serde_json::json!({
+                                    "name": m.name,
+                                    "index": m.index,
+                                    "type": m.mem_type,
+                                    "startAddress": m.start_address,
+                                    "endAddress": m.end_address
+                                })
                             })
-                        } else {
-                            let base_addr = 0x7fff00000000u64 + (i as u64 * 0x10000);
+                            .collect();
+                        WsMessage::response(
+                            id,
                             serde_json::json!({
-                                "input": ptr,
-                                "dword": format!("0x{:08x}", base_addr % 0xFFFFFFFF),
-                                "float": format!("{:.8}", (base_addr as f64 % 100.0) / 100.0),
-                                "trace": [
-                                    format!("libUE4.so[Cd][1] = 0x{:x}", base_addr),
-                                    format!("0x{:x}+0xffff = 0x{:x}", base_addr, base_addr + 0xffff),
-                                    format!("0x{:x}+0x123 = 0x{:x}", base_addr + 0xffff, base_addr + 0xffff + 0x123),
-                                    format!("0x{:x}+0x234 = 0x{:x}", base_addr + 0xffff + 0x123, base_addr + 0xffff + 0x123 + 0x234),
-                                ]
-                            })
-                        }
-                    })
-                    .collect();
-
-                WsMessage::response(
-                    id,
-                    serde_json::json!({
-                        "success": true,
-                        "count": results.len(),
-                        "results": results
-                    }),
-                )
+                                "success": true,
+                                "packageName": package_name,
+                                "modules": modules_json
+                            }),
+                        )
+                    }
+                    Err(e) => {
+                        info!("  ├─ Get modules failed: {}", e);
+                        WsMessage::error(id, &format!("Failed to get modules: {}", e))
+                    }
+                }
+            }
+            Self::StartScan => {
+                // StartScan 在 Service::handle_message 中特殊处理
+                WsMessage::error(id, "StartScan should be handled by Service")
             }
         }
     }
@@ -426,6 +279,8 @@ impl CommandHandler {
 /// 服务核心 - 命令执行器
 pub struct Service {
     handlers: HashMap<String, CommandHandler>,
+    /// 扫描输出广播通道
+    scan_output_tx: broadcast::Sender<String>,
 }
 
 impl Service {
@@ -436,17 +291,26 @@ impl Service {
         handlers.insert("ping".to_string(), CommandHandler::Ping);
         handlers.insert("status".to_string(), CommandHandler::Status);
         handlers.insert("login".to_string(), CommandHandler::Login);
-        handlers.insert("get_processes".to_string(), CommandHandler::GetProcesses);
+        handlers.insert("get_apps".to_string(), CommandHandler::GetApps);
+        handlers.insert("get_app_info".to_string(), CommandHandler::GetAppInfo);
         handlers.insert("get_modules".to_string(), CommandHandler::GetModules);
-        handlers.insert("get_files".to_string(), CommandHandler::GetFiles);
-        handlers.insert("convert_format".to_string(), CommandHandler::ConvertFormat);
-        handlers.insert("preview_txt".to_string(), CommandHandler::PreviewTxt);
-        handlers.insert("debug_pointers".to_string(), CommandHandler::DebugPointers);
+        handlers.insert("get_next_file".to_string(), CommandHandler::GetNextFile);
+        handlers.insert("start_scan".to_string(), CommandHandler::StartScan);
 
-        Self { handlers }
+        // 创建扫描输出广播通道
+        let (scan_output_tx, _) = broadcast::channel(1000);
+
+        Self {
+            handlers,
+            scan_output_tx,
+        }
     }
 
-    pub async fn handle_message(&self, msg: WsMessage) -> Option<WsMessage> {
+    pub fn get_scan_output_rx(&self) -> broadcast::Receiver<String> {
+        self.scan_output_tx.subscribe()
+    }
+
+    pub async fn handle_message(&self, msg: WsMessage, _broadcast_tx: broadcast::Sender<String>) -> Option<WsMessage> {
         match msg.msg_type {
             MessageType::Heartbeat => {
                 debug!("♥ Heartbeat received, sending ack");
@@ -464,6 +328,33 @@ impl Service {
 
                 info!("⚡ Command: {}", command);
 
+                // 特殊处理start_scan命令
+                if command == "start_scan" {
+                    let task_id = uuid::Uuid::new_v4().to_string();
+                    info!("  ├─ Starting scan task: {}", task_id);
+
+                    // 立即返回任务ID
+                    let response = WsMessage::response(
+                        msg.id.clone(),
+                        serde_json::json!({
+                            "success": true,
+                            "taskId": task_id,
+                            "message": "扫描任务已启动"
+                        }),
+                    );
+
+                    // 启动后台扫描任务
+                    let scan_tx = self.scan_output_tx.clone();
+                    let params = params.cloned().unwrap_or(serde_json::json!({}));
+                    let task_id_clone = task_id.clone();
+
+                    tokio::spawn(async move {
+                        Self::run_scan_task(task_id_clone, params, scan_tx).await;
+                    });
+
+                    return Some(response);
+                }
+
                 if let Some(handler) = self.handlers.get(command) {
                     Some(handler.execute(msg.id.clone(), params).await)
                 } else {
@@ -477,6 +368,181 @@ impl Service {
             _ => {
                 warn!("❓ Unknown message type: {:?}", msg.msg_type);
                 None
+            }
+        }
+    }
+
+    /// 运行扫描任务
+    async fn run_scan_task(task_id: String, params: serde_json::Value, scan_tx: broadcast::Sender<String>) {
+        use tokio::process::Command;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let binary = handlers::get_scan_binary();
+
+        // 构建命令参数
+        let mut cmd = Command::new(&binary);
+        cmd.arg("scan");
+
+        if let Some(package) = params.get("packageName").and_then(|p| p.as_str()) {
+            cmd.arg("-p").arg(package);
+        } else if let Some(pid) = params.get("pid").and_then(|p| p.as_i64()) {
+            cmd.arg("--pid").arg(pid.to_string());
+        }
+
+        if let Some(addrs) = params.get("addresses").and_then(|a| a.as_array()) {
+            for addr in addrs {
+                if let Some(addr_str) = addr.as_str() {
+                    cmd.arg("-a").arg(addr_str);
+                }
+            }
+        }
+
+        if let Some(depth) = params.get("depth").and_then(|d| d.as_i64()) {
+            cmd.arg("-d").arg(depth.to_string());
+        }
+
+        if let Some(offset) = params.get("offset").and_then(|o| o.as_i64()) {
+            cmd.arg("-o").arg(offset.to_string());
+        }
+
+        if let Some(outfile) = params.get("outputFile").and_then(|f| f.as_str()) {
+            cmd.arg("-f").arg(outfile);
+        }
+
+        if let Some(count) = params.get("count").and_then(|c| c.as_i64()) {
+            cmd.arg("--count").arg(count.to_string());
+        }
+
+        if let Some(size) = params.get("size").and_then(|s| s.as_i64()) {
+            cmd.arg("--size").arg(size.to_string());
+        }
+
+        if let Some(ranges) = params.get("ranges").and_then(|r| r.as_array()) {
+            for range in ranges {
+                if let Some(range_str) = range.as_str() {
+                    cmd.arg("-r").arg(range_str);
+                }
+            }
+        }
+
+        if let Some(fast) = params.get("fastMode").and_then(|f| f.as_bool()) {
+            if fast {
+                cmd.arg("--rest");
+            }
+        }
+
+        if let Some(page_fault) = params.get("pageFault").and_then(|p| p.as_bool()) {
+            if page_fault {
+                cmd.arg("--page-fault");
+            }
+        }
+
+        if let Some(reader) = params.get("reader").and_then(|r| r.as_str()) {
+            cmd.arg("--reader").arg(reader);
+        }
+
+        info!("  ├─ Executing scan command");
+
+        // 发送开始消息 - 包装成WsMessage格式
+        let start_msg = WsMessage {
+            msg_type: MessageType::Stream,
+            id: Some(task_id.clone()),
+            data: Some(serde_json::json!({
+                "taskId": task_id,
+                "type": "start",
+                "message": "扫描开始"
+            })),
+        };
+        let _ = scan_tx.send(start_msg.encode());
+
+        // 执行命令并获取输出
+        match cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn() {
+            Ok(mut child) => {
+                let stdout = child.stdout.take().unwrap();
+                let stderr = child.stderr.take().unwrap();
+
+                // 读取stdout
+                let stdout_task_id = task_id.clone();
+                let stdout_tx = scan_tx.clone();
+                let stdout_handle = tokio::spawn(async move {
+                    let reader = BufReader::new(stdout);
+                    let mut lines = reader.lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        info!("  ├─ [stdout] {}", line);
+                        let stream_msg = WsMessage {
+                            msg_type: MessageType::Stream,
+                            id: Some(stdout_task_id.clone()),
+                            data: Some(serde_json::json!({
+                                "taskId": stdout_task_id,
+                                "type": "stdout",
+                                "line": line
+                            })),
+                        };
+                        let _ = stdout_tx.send(stream_msg.encode());
+                    }
+                    info!("  ├─ [stdout] 读取完成");
+                });
+
+                // 读取stderr
+                let stderr_task_id = task_id.clone();
+                let stderr_tx = scan_tx.clone();
+                let stderr_handle = tokio::spawn(async move {
+                    let reader = BufReader::new(stderr);
+                    let mut lines = reader.lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        info!("  ├─ [stderr] {}", line);
+                        let stream_msg = WsMessage {
+                            msg_type: MessageType::Stream,
+                            id: Some(stderr_task_id.clone()),
+                            data: Some(serde_json::json!({
+                                "taskId": stderr_task_id,
+                                "type": "stderr",
+                                "line": line
+                            })),
+                        };
+                        let _ = stderr_tx.send(stream_msg.encode());
+                    }
+                    info!("  ├─ [stderr] 读取完成");
+                });
+
+                // 等待任务完成
+                info!("  ├─ 等待子进程完成...");
+                let status = child.wait().await;
+                info!("  ├─ 等待stdout读取完成...");
+                let _ = stdout_handle.await;
+                info!("  ├─ 等待stderr读取完成...");
+                let _ = stderr_handle.await;
+                info!("  ├─ 所有任务完成");
+
+                // 发送完成消息 - 包装成WsMessage格式
+                let exit_code = status.map(|s| s.code()).unwrap_or(None);
+                let complete_msg = WsMessage {
+                    msg_type: MessageType::Stream,
+                    id: Some(task_id.clone()),
+                    data: Some(serde_json::json!({
+                        "taskId": task_id,
+                        "type": "complete",
+                        "exitCode": exit_code,
+                        "success": exit_code == Some(0)
+                    })),
+                };
+                info!("  ├─ 发送完成消息");
+                let _ = scan_tx.send(complete_msg.encode());
+
+                info!("  ├─ Scan task completed: {} exit_code={:?}", task_id, exit_code);
+            }
+            Err(e) => {
+                error!("  ├─ Failed to start scan: {}", e);
+                let error_msg = WsMessage {
+                    msg_type: MessageType::Stream,
+                    id: Some(task_id.clone()),
+                    data: Some(serde_json::json!({
+                        "taskId": task_id,
+                        "type": "error",
+                        "message": format!("启动扫描失败: {}", e)
+                    })),
+                };
+                let _ = scan_tx.send(error_msg.encode());
             }
         }
     }
@@ -508,6 +574,9 @@ async fn handle_connection(
     // 订阅广播
     let mut broadcast_rx = broadcast_tx.subscribe();
 
+    // 订阅扫描输出
+    let mut scan_output_rx = service.get_scan_output_rx();
+
     // 发送欢迎消息
     let welcome = WsMessage::response(
         None,
@@ -515,7 +584,8 @@ async fn handle_connection(
             "status": "connected",
             "message": "Welcome to FScan Service",
             "version": "2.0.0",
-            "features": ["heartbeat", "command"]
+            "features": ["heartbeat", "command"],
+            "commands": ["ping", "status", "login", "get_apps", "get_app_info", "get_modules", "get_next_file", "start_scan"]
         }),
     );
     info!("[{}] → Sending welcome message", addr);
@@ -529,10 +599,25 @@ async fn handle_connection(
     let tx = broadcast_tx.clone();
     let client_addr = addr;
     let mut send_task = tokio::spawn(async move {
-        while let Ok(msg) = broadcast_rx.recv().await {
-            debug!("[{}] → Sending broadcast: {}", client_addr, msg);
-            if ws_sender.send(msg.into()).await.is_err() {
-                break;
+        // 合并两个接收器
+        loop {
+            tokio::select! {
+                msg = broadcast_rx.recv() => {
+                    if let Ok(msg) = msg {
+                        debug!("[{}] → Sending broadcast: {}", client_addr, msg);
+                        if ws_sender.send(msg.into()).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+                msg = scan_output_rx.recv() => {
+                    if let Ok(msg) = msg {
+                        info!("[{}] → Sending scan output: {}", client_addr, &msg[..msg.len().min(100)]);
+                        if ws_sender.send(msg.into()).await.is_err() {
+                            break;
+                        }
+                    }
+                }
             }
         }
     });
@@ -545,7 +630,7 @@ async fn handle_connection(
                 // 解析消息
                 if let Some(ws_msg) = WsMessage::decode(&text) {
                     // 通过 Service 处理消息
-                    if let Some(response) = service.handle_message(ws_msg).await {
+                    if let Some(response) = service.handle_message(ws_msg, tx.clone()).await {
                         info!("[{}] → Response type: {:?}", addr, response.msg_type);
                         debug!("[{}] → Response: {}", addr, response.encode());
                         let _ = tx.send(response.encode());
@@ -570,7 +655,10 @@ async fn handle_connection(
 
 #[tokio::main]
 async fn main() {
-    // 初始化日志
+    // 初始化日志（默认 info 级别）
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info");
+    }
     env_logger::init();
 
     // 启动日志

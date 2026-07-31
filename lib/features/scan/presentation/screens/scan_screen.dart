@@ -4,6 +4,9 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/services/module_service.dart';
+import 'package:fscan/core/network/ws_service.dart';
+import 'package:fscan/core/utils/logger.dart';
+import 'package:fscan/shared/widgets/terminal_panel.dart';
 
 /// 基址搜索页面 - MD3 风格
 class ScanScreen extends StatefulWidget {
@@ -27,6 +30,50 @@ class _ScanScreenState extends State<ScanScreen> {
   bool isFastMode = false; // true=快速模式, false=普通模式
   bool readProtected = false; // 读取受限内存
   String outputPath = '/storage/emulated/0/fscan/a1.out';
+  String? _currentTaskId;
+  bool _showTerminal = false;
+
+  // 内存范围
+  Map<String, bool> memoryRanges = {
+    'Java_heap': true,
+    'C_heap': false,
+    'C_alloc': true,
+    'C_data': true,
+    'C_bss': true,
+    'PPSSPP': false,
+    'Anonymous': true,
+    'Java': false,
+    'Stack': false,
+    'Ashmem': false,
+    'Video': false,
+    'Other': false,
+    'Bad': false,
+    'Code_app': true,
+    'Code_exec': false,
+    'All': false,
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    // 延迟到build完成后加载，避免setState错误
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initModulesIfNeeded();
+      _generateOutputPath();  // 初始化时生成输出路径
+    });
+  }
+
+  /// 如果有选中的包名，自动加载模块
+  Future<void> _initModulesIfNeeded() async {
+    final appConfig = context.read<AppConfig>();
+    final wsService = context.read<WsService>();
+
+    // 如果有选中的包名但模块未加载，则自动加载
+    if (appConfig.selectedPackageName != null && !appConfig.modulesLoaded) {
+      logger.info('ScanScreen', '自动加载模块: ${appConfig.selectedPackageName}');
+      await appConfig.fetchAndLoadModules(wsService, appConfig.selectedPackageName);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,35 +81,94 @@ class _ScanScreenState extends State<ScanScreen> {
       appBar: AppBar(
         title: const Text('基址搜索'),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // 目标地址
-            _buildAddressCard(),
-            const SizedBox(height: 16),
+      body: Column(
+        children: [
+          // 主要内容区域
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  // 目标地址
+                  _buildAddressCard(),
+                  const SizedBox(height: 16),
 
-            // 核心配置
-            _buildCoreConfigCard(),
-            const SizedBox(height: 16),
+                  // 核心配置
+                  _buildCoreConfigCard(),
+                  const SizedBox(height: 16),
 
-            // 模块选择
-            _buildModuleCard(),
-            const SizedBox(height: 16),
+                  // 模块选择
+                  _buildModuleCard(),
+                  const SizedBox(height: 16),
 
-            // 文件选择
-            _buildFileCard(),
-            const SizedBox(height: 16),
+                  // 文件选择
+                  _buildFileCard(),
+                  const SizedBox(height: 16),
 
-            // 高级选项
-            _buildAdvancedCard(),
-            const SizedBox(height: 24),
+                  // 高级选项
+                  _buildAdvancedCard(),
+                  const SizedBox(height: 24),
 
-            // 操作按钮
-            _buildActionButtons(),
-            const SizedBox(height: 32),
-          ],
-        ),
+                  // 操作按钮
+                  _buildActionButtons(),
+
+                  // 终端面板（嵌入式）
+                  if (_showTerminal && _currentTaskId != null) ...[
+                    const SizedBox(height: 16),
+                    _buildTerminalCard(),
+                  ],
+
+                  const SizedBox(height: 32),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 终端面板卡片
+  Widget _buildTerminalCard() {
+    return Card(
+      child: Column(
+        children: [
+          // 标题栏
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.terminal, size: 20, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                Text('终端输出', style: Theme.of(context).textTheme.titleSmall),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20),
+                  onPressed: () {
+                    setState(() {
+                      _showTerminal = false;
+                      _currentTaskId = null;
+                    });
+                  },
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+          ),
+          // 终端内容
+          SizedBox(
+            height: 250,
+            child: TerminalPanel(
+              key: ValueKey(_currentTaskId),
+              taskId: _currentTaskId,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -158,9 +264,25 @@ class _ScanScreenState extends State<ScanScreen> {
           const Divider(height: 1, indent: 16, endIndent: 16),
           ListTile(
             title: const Text('输出路径'),
-            trailing: Text(
+            subtitle: Text(
               outputPath.split('/').last,
-              style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 12),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontSize: 12,
+                fontFamily: 'monospace',
+              ),
+            ),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextButton.icon(
+                  onPressed: _generateOutputPath,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('自动生成'),
+                ),
+                const SizedBox(width: 4),
+                Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              ],
             ),
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
@@ -583,6 +705,43 @@ class _ScanScreenState extends State<ScanScreen> {
 
   // === 编辑方法 ===
 
+  /// 生成输出路径
+  Future<void> _generateOutputPath() async {
+    final appConfig = context.read<AppConfig>();
+    final wsService = context.read<WsService>();
+
+    // 确定目录：如果有选中的包名，则使用扫描数据路径+包名
+    String dir = appConfig.dataPath;
+    if (appConfig.selectedPackageName != null) {
+      dir = '$dir/${appConfig.selectedPackageName}';
+    }
+
+    // 调用获取下一个文件路径
+    final path = await wsService.getNextFile(dir, 'out');
+
+    if (path != null && mounted) {
+      final fileName = path.split('/').last;
+      setState(() {
+        outputPath = path;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('输出路径已生成: $fileName'),
+          duration: const Duration(seconds: 1),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      logger.info('ScanScreen', '输出路径已生成: $path');
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('生成输出路径失败，请检查路径配置'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
   void editAddress() {
     final controller = TextEditingController();
     List<String> tempList = List.from(searchAddresses);
@@ -954,7 +1113,7 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  void openModuleSelector() {
+  void openModuleSelector() async {
     final appConfig = context.read<AppConfig>();
     final currentPackageName = appConfig.selectedPackageName;
 
@@ -972,17 +1131,21 @@ class _ScanScreenState extends State<ScanScreen> {
     // 临时选中列表（用户之前选中的模块）
     List<ModuleItem> tempSelected = List<ModuleItem>.from(appConfig.selectedModules);
     String searchText = '';
+    bool isLoading = true;
+    Function(VoidCallback)? setDialogState;
 
-    // 使用 AppConfig 中的可用模块列表（从服务器获取的）
-    final modulesToShow = appConfig.availableModules;
+    if (!mounted) return;
 
+    // 显示弹窗（先显示loading）
     showDialog(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialog) {
+            setDialogState = setDialog;
+
             // 筛选模块
-            final filteredModules = modulesToShow.where((module) {
+            final filteredModules = appConfig.availableModules.where((module) {
               return module.name.toLowerCase().contains(searchText.toLowerCase());
             }).toList();
 
@@ -1044,50 +1207,61 @@ class _ScanScreenState extends State<ScanScreen> {
                           ],
                         ),
                       ),
-                    // 模块列表
+                    // 模块列表或Loading
                     Expanded(
-                      child: modulesToShow.isEmpty
-                          ? Center(
+                      child: isLoading
+                          ? const Center(
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Icon(Icons.extension_off, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                                  const SizedBox(height: 16),
-                                  Text('暂无模块数据', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                                  const SizedBox(height: 8),
-                                  Text('请确保已连接服务器并选择进程', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
+                                  CircularProgressIndicator(),
+                                  SizedBox(height: 16),
+                                  Text('正在获取模块列表...'),
                                 ],
                               ),
                             )
-                          : ListView.builder(
-                              itemCount: filteredModules.length,
-                              itemBuilder: (context, index) {
-                                final module = filteredModules[index];
-                                final isSelected = tempSelected.contains(module);
-                                return CheckboxListTile(
-                                  value: isSelected,
-                                  onChanged: (selected) {
-                                    setDialog(() {
-                                      if (selected == true) {
-                                        tempSelected.add(module);
-                                      } else {
-                                        tempSelected.remove(module);
-                                      }
-                                    });
-                                  },
-                                  title: Text(module.name, style: const TextStyle(fontFamily: 'monospace')),
-                                  subtitle: Text('${module.type} | ${module.startAddress} ~ ${module.endAddress}'),
-                                  secondary: CircleAvatar(
-                                    backgroundColor: _getTypeColor(module.type),
-                                    radius: 12,
-                                    child: Text(
-                                      module.type,
-                                      style: const TextStyle(color: Colors.white, fontSize: 10),
-                                    ),
+                          : (filteredModules.isEmpty
+                              ? Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.extension_off, size: 48, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                      const SizedBox(height: 16),
+                                      Text('暂无模块数据', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                                      const SizedBox(height: 8),
+                                      Text('请确保已连接服务器并选择进程', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
+                                    ],
                                   ),
-                                );
-                              },
-                            ),
+                                )
+                              : ListView.builder(
+                                  itemCount: filteredModules.length,
+                                  itemBuilder: (context, index) {
+                                    final module = filteredModules[index];
+                                    final isSelected = tempSelected.contains(module);
+                                    return CheckboxListTile(
+                                      value: isSelected,
+                                      onChanged: (selected) {
+                                        setDialog(() {
+                                          if (selected == true) {
+                                            tempSelected.add(module);
+                                          } else {
+                                            tempSelected.remove(module);
+                                          }
+                                        });
+                                      },
+                                      title: Text(module.name, style: const TextStyle(fontFamily: 'monospace')),
+                                      subtitle: Text('${module.type} | ${module.startAddress} ~ ${module.endAddress}'),
+                                      secondary: CircleAvatar(
+                                        backgroundColor: _getTypeColor(module.type),
+                                        radius: 12,
+                                        child: Text(
+                                          module.type,
+                                          style: const TextStyle(color: Colors.white, fontSize: 10),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                )),
                     ),
                   ],
                 ),
@@ -1119,6 +1293,21 @@ class _ScanScreenState extends State<ScanScreen> {
         );
       },
     );
+
+    // 弹窗显示后，加载数据并更新UI
+    try {
+      final wsService = context.read<WsService>();
+      await appConfig.fetchAndLoadModules(wsService, currentPackageName);
+    } catch (e) {
+      logger.error('ScanScreen', '加载模块失败', e);
+    } finally {
+      // 更新loading状态，显示模块列表
+      if (mounted && setDialogState != null) {
+        setDialogState!(() {
+          isLoading = false;
+        });
+      }
+    }
   }
 
   void editCores() {
@@ -1233,14 +1422,75 @@ class _ScanScreenState extends State<ScanScreen> {
     );
   }
 
-  void startScan() {
+  /// 开始扫描
+  Future<void> startScan() async {
     if (searchAddresses.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('请先设置目标地址')),
       );
       return;
     }
-    // TODO: 实现扫描逻辑
+
+    final appConfig = context.read<AppConfig>();
+    final wsService = context.read<WsService>();
+
+    // 检查WebSocket连接
+    if (!wsService.isConnected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('未连接到服务器')),
+      );
+      return;
+    }
+
+    // 构建扫描参数
+    final ranges = <String>[];
+    if (memoryRanges['Anonymous'] == true) ranges.add('Anonymous');
+    if (memoryRanges['C_alloc'] == true) ranges.add('C_alloc');
+    if (memoryRanges['C_data'] == true) ranges.add('C_data');
+    if (memoryRanges['C_bss'] == true) ranges.add('C_bss');
+    if (memoryRanges['C_heap'] == true) ranges.add('C_heap');
+    if (memoryRanges['Java_heap'] == true) ranges.add('Java_heap');
+    if (memoryRanges['Java'] == true) ranges.add('Java');
+    if (memoryRanges['Stack'] == true) ranges.add('Stack');
+    if (memoryRanges['Video'] == true) ranges.add('Video');
+    if (memoryRanges['Code_app'] == true) ranges.add('Code_app');
+    if (memoryRanges['Code_exec'] == true) ranges.add('Code_exec');
+    if (memoryRanges['Ashmem'] == true) ranges.add('Ashmem');
+    if (memoryRanges['Other'] == true) ranges.add('Other');
+    if (memoryRanges['Bad'] == true) ranges.add('Bad');
+    if (memoryRanges['PPSSPP'] == true) ranges.add('PPSSPP');
+
+    // 启动扫描
+    final taskId = await wsService.startScan(
+      packageName: appConfig.selectedPackageName,
+      pid: appConfig.selectedPid,
+      addresses: searchAddresses,
+      depth: scanLevel,
+      offset: int.tryParse(scanRange.replaceAll('0x', ''), radix: 16) ?? 0x7D0,
+      outputFile: outputPath,
+      count: scanCores,
+      size: 1 << 20,
+      ranges: ranges,
+      fastMode: isFastMode,
+      pageFault: handlePageFault,
+    );
+
+    if (taskId != null && mounted) {
+      setState(() {
+        _currentTaskId = taskId;
+        _showTerminal = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('扫描已启动'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('启动扫描失败')),
+      );
+    }
   }
 
   /// 格式化范围显示：0x7D0 / 2000

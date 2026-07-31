@@ -1,7 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/network/ws_service.dart';
+import 'package:fscan/core/utils/logger.dart';
 
 /// 进程数据模型
 class ProcessInfo {
@@ -30,6 +33,7 @@ class _DriverScreenState extends State<DriverScreen> {
   String pidInput = '';
   bool processMonitor = false;
   bool restartRequired = false;
+  Timer? _processMonitorTimer;
 
   // 内存范围
   Map<String, bool> memoryRanges = {
@@ -60,11 +64,61 @@ class _DriverScreenState extends State<DriverScreen> {
     super.initState();
     // 延迟到 build 完成后再加载，避免 setState during build 错误
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadProcesses();
+      _loadSavedProcess();
     });
   }
 
-  /// 从服务器加载进程列表
+  @override
+  void dispose() {
+    _stopProcessMonitor();
+    super.dispose();
+  }
+
+  /// 从本地存储加载保存的进程配置
+  Future<void> _loadSavedProcess() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedPackage = prefs.getString('selected_process_package');
+    final savedArch = prefs.getString('selected_process_arch') ?? 'x64';
+    final savedPid = prefs.getInt('selected_process_pid') ?? 0;
+
+    if (savedPackage != null && savedPackage.isNotEmpty) {
+      setState(() {
+        selectedProcess = ProcessInfo(
+          packageName: savedPackage,
+          arch: savedArch,
+          pid: savedPid,
+        );
+        pidInput = savedPid.toString();
+      });
+
+      // 如果有保存的包名，自动开启进程监听
+      processMonitor = true;
+      _startProcessMonitor();
+    }
+
+    // 加载进程列表
+    await _loadProcesses();
+  }
+
+  /// 保存进程配置到本地存储
+  Future<void> _saveProcessConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (selectedProcess != null) {
+      await prefs.setString('selected_process_package', selectedProcess!.packageName);
+      await prefs.setString('selected_process_arch', selectedProcess!.arch);
+      await prefs.setInt('selected_process_pid', selectedProcess!.pid);
+    }
+  }
+
+  /// 清除保存的进程配置
+  Future<void> _clearProcessConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('selected_process_package');
+    await prefs.remove('selected_process_arch');
+    await prefs.remove('selected_process_pid');
+  }
+
+  /// 从服务器加载运行中的应用列表
   Future<void> _loadProcesses() async {
     if (!mounted) return;
 
@@ -72,11 +126,11 @@ class _DriverScreenState extends State<DriverScreen> {
 
     try {
       final wsService = context.read<WsService>();
-      final processes = await wsService.getProcesses();
+      final apps = await wsService.getApps();
 
-      if (processes != null && mounted) {
+      if (apps != null && mounted) {
         setState(() {
-          allProcesses = processes.map((p) => ProcessInfo(
+          allProcesses = apps.map((p) => ProcessInfo(
             packageName: p['packageName'] ?? '',
             arch: p['arch'] ?? 'x64',
             pid: p['pid'] ?? 0,
@@ -90,6 +144,85 @@ class _DriverScreenState extends State<DriverScreen> {
       if (mounted) {
         setState(() => _isLoadingProcesses = false);
       }
+    }
+  }
+
+  /// 启动进程监听（每5秒刷新一次PID）
+  void _startProcessMonitor() {
+    _stopProcessMonitor(); // 先停止之前的监听
+    _processMonitorTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      _refreshPid();
+    });
+    logger.info('DriverScreen', '进程监听已启动');
+  }
+
+  /// 停止进程监听
+  void _stopProcessMonitor() {
+    _processMonitorTimer?.cancel();
+    _processMonitorTimer = null;
+    logger.info('DriverScreen', '进程监听已停止');
+  }
+
+  /// 刷新进程PID（通过包名获取最新PID）
+  Future<void> _refreshPid() async {
+    if (!mounted || selectedProcess == null) return;
+
+    try {
+      final wsService = context.read<WsService>();
+
+      // 检查WebSocket连接状态
+      if (!wsService.isConnected) {
+        logger.warning('DriverScreen', 'WebSocket未连接，跳过PID刷新');
+        return;
+      }
+
+      final appInfo = await wsService.getAppInfo(selectedProcess!.packageName);
+
+      if (mounted) {
+        if (appInfo != null) {
+          final newPid = appInfo['pid'] as int? ?? 0;
+          if (newPid != selectedProcess!.pid) {
+            setState(() {
+              selectedProcess = ProcessInfo(
+                packageName: selectedProcess!.packageName,
+                arch: appInfo['arch'] ?? selectedProcess!.arch,
+                pid: newPid,
+              );
+              pidInput = newPid.toString();
+
+              // 通知 AppConfig 选中的进程
+              final appConfig = context.read<AppConfig>();
+              appConfig.setSelectedProcess(
+                selectedProcess?.packageName,
+                selectedProcess?.pid,
+              );
+            });
+            logger.info('DriverScreen', 'PID已更新: ${selectedProcess!.packageName} -> $newPid');
+          }
+        } else {
+          // 找不到应用，设置PID为0表示未运行
+          if (selectedProcess!.pid != 0) {
+            setState(() {
+              selectedProcess = ProcessInfo(
+                packageName: selectedProcess!.packageName,
+                arch: selectedProcess!.arch,
+                pid: 0,
+              );
+              pidInput = '0';
+
+              // 通知 AppConfig 选中的进程
+              final appConfig = context.read<AppConfig>();
+              appConfig.setSelectedProcess(
+                selectedProcess?.packageName,
+                0,
+              );
+            });
+            logger.info('DriverScreen', '应用未运行，PID设置为0: ${selectedProcess!.packageName}');
+          }
+        }
+      }
+    } catch (e) {
+      logger.error('DriverScreen', '刷新PID失败', e);
     }
   }
 
@@ -147,7 +280,31 @@ class _DriverScreenState extends State<DriverScreen> {
                     : Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
-            trailing: Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (selectedProcess != null)
+                  IconButton(
+                    icon: Icon(Icons.clear, color: Theme.of(context).colorScheme.error),
+                    onPressed: () async {
+                      setState(() {
+                        selectedProcess = null;
+                        pidInput = '';
+                        processMonitor = false;
+                        _stopProcessMonitor();
+                      });
+                      await _clearProcessConfig();
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('已清除进程配置')),
+                        );
+                      }
+                    },
+                    tooltip: '清除',
+                  ),
+                Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant),
+              ],
+            ),
             onTap: selectProcess,
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
@@ -209,7 +366,7 @@ class _DriverScreenState extends State<DriverScreen> {
               children: [
                 const Text('进程监听'),
                 const SizedBox(width: 4),
-                _buildHelpIcon('进程监听说明', '选中包名后，后台将开启一个线程每隔2秒获取当前选中的包名PID。\n\n'
+                _buildHelpIcon('进程监听说明', '选中包名后，后台将开启一个线程每隔5秒获取当前选中的包名PID。\n\n'
                     '开启后不允许自己设置PID。\n\n'
                     '开启需要先设置包名，否则不允许开启。\n\n'
                     '修改后需要重启生效。'),
@@ -228,6 +385,13 @@ class _DriverScreenState extends State<DriverScreen> {
                 processMonitor = v;
                 restartRequired = true;
               });
+
+              // 启动或停止进程监听
+              if (v) {
+                _startProcessMonitor();
+              } else {
+                _stopProcessMonitor();
+              }
             },
           ),
 
@@ -697,17 +861,18 @@ class _DriverScreenState extends State<DriverScreen> {
 
                           // 通知 AppConfig 选中的进程
                           final appConfig = context.read<AppConfig>();
-                          final wsService = context.read<WsService>();
                           appConfig.setSelectedProcess(
                             tempSelected?.packageName,
                             tempSelected?.pid,
                           );
 
-                          // 从服务器获取模块并加载
-                          await appConfig.fetchAndLoadModules(
-                            wsService,
-                            tempSelected?.packageName,
-                          );
+                          // 保存配置到本地
+                          await _saveProcessConfig();
+
+                          // 如果进程监听已开启，重启监听
+                          if (processMonitor) {
+                            _startProcessMonitor();
+                          }
 
                           if (mounted && context.mounted) {
                             Navigator.pop(context);
