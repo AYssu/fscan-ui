@@ -10,6 +10,17 @@ subprojects {
     pluginManager.withPlugin("com.android.library") {
         pluginManager.apply("org.jetbrains.kotlin.android")
     }
+
+    // 强制所有子项目使用 compileSdk 36
+    pluginManager.withPlugin("com.android.library") {
+        afterEvaluate {
+            if (extensions.findByType(com.android.build.gradle.LibraryExtension::class.java) != null) {
+                extensions.configure<com.android.build.gradle.LibraryExtension> {
+                    compileSdk = 36
+                }
+            }
+        }
+    }
 }
 
 val newBuildDir: Directory =

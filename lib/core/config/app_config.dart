@@ -59,7 +59,6 @@ class AppConfig extends ChangeNotifier {
 
     // 加载保存的进程配置
     final savedPackage = prefs.getString('selected_process_package');
-    final savedArch = prefs.getString('selected_process_arch') ?? 'x64';
     final savedPid = prefs.getInt('selected_process_pid') ?? 0;
 
     if (savedPackage != null && savedPackage.isNotEmpty) {

@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:voo_terminal/voo_terminal.dart';
 import 'package:fscan/core/network/ws_service.dart';
-import 'package:fscan/core/utils/logger.dart';
 
 /// 嵌入式终端面板
 class TerminalPanel extends StatefulWidget {
@@ -21,7 +20,6 @@ class TerminalPanel extends StatefulWidget {
 class _TerminalPanelState extends State<TerminalPanel> {
   late TerminalController _terminalController;
   StreamSubscription? _subscription;
-  bool _isRunning = false;
 
   @override
   void initState() {
@@ -62,7 +60,6 @@ class _TerminalPanelState extends State<TerminalPanel> {
         }
 
         if (type == 'start') {
-          setState(() => _isRunning = true);
           _terminalController.write(messageText ?? '任务开始');
         } else if (type == 'stdout' && line != null) {
           _terminalController.write(line);
@@ -70,10 +67,8 @@ class _TerminalPanelState extends State<TerminalPanel> {
           _terminalController.write(line);
         } else if (type == 'complete') {
           final success = data['success'] as bool? ?? false;
-          setState(() => _isRunning = false);
           _terminalController.write(success ? '✓ 扫描完成' : '✗ 扫描失败');
         } else if (type == 'error') {
-          setState(() => _isRunning = false);
           _terminalController.write(messageText ?? '未知错误');
         }
       }
