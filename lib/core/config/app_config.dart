@@ -51,11 +51,59 @@ class AppConfig extends ChangeNotifier {
   bool _modulesLoaded = false;
   bool get modulesLoaded => _modulesLoaded;
 
+  // 内存范围配置
+  Map<String, bool> _memoryRanges = {
+    'Anonymous': true,
+    'C_alloc': true,
+    'C_data': true,
+    'C_bss': true,
+    'C_heap': false,
+    'Java_heap': true,
+    'Java': false,
+    'Stack': false,
+    'Video': false,
+    'Code_app': true,
+    'Code_system': false,
+    'Ashmem': false,
+    'Other': false,
+    'Bad': false,
+    'PPSSPP': false,
+    'All': false,
+  };
+  Map<String, bool> get memoryRanges => _memoryRanges;
+
   /// 初始化，从本地存储加载
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
     _configPath = prefs.getString('app_configPath') ?? '/sdcard/fscan/config';
     _dataPath = prefs.getString('app_dataPath') ?? '/sdcard/fscan/data';
+
+    // 加载读写方式和动态库路径
+    _rwMethod = prefs.getInt('app_rwMethod') ?? 0;
+    _libPath = prefs.getString('app_libPath') ?? '/data/local/tmp/libmemory.so';
+
+    // 加载内存范围配置
+    final savedRanges = prefs.getString('app_memoryRanges');
+    if (savedRanges != null) {
+      try {
+        // 解析保存的内存范围
+        // 格式: {Anonymous: true, C_alloc: true, ...}
+        final cleaned = savedRanges.replaceAll('{', '').replaceAll('}', '');
+        for (var item in cleaned.split(', ')) {
+          final parts = item.split(': ');
+          if (parts.length == 2) {
+            final key = parts[0].trim();
+            final value = parts[1].trim() == 'true';
+            if (_memoryRanges.containsKey(key)) {
+              _memoryRanges[key] = value;
+            }
+          }
+        }
+      } catch (e) {
+        // 解析失败，使用默认值
+        logger.warning('AppConfig', '解析内存范围配置失败: $e');
+      }
+    }
 
     // 加载保存的进程配置
     final savedPackage = prefs.getString('selected_process_package');
@@ -71,15 +119,36 @@ class AppConfig extends ChangeNotifier {
   }
 
   /// 设置读写方式
-  void setRwMethod(int method) {
+  Future<void> setRwMethod(int method) async {
     _rwMethod = method;
     notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('app_rwMethod', method);
   }
 
   /// 设置动态库地址
-  void setLibPath(String path) {
+  Future<void> setLibPath(String path) async {
     _libPath = path;
     notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('app_libPath', path);
+  }
+
+  /// 设置内存范围
+  Future<void> setMemoryRanges(Map<String, bool> ranges) async {
+    _memoryRanges = Map.from(ranges);
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    // 保存为JSON字符串
+    await prefs.setString('app_memoryRanges', ranges.toString());
+  }
+
+  /// 切换单个内存范围
+  Future<void> toggleMemoryRange(String key) async {
+    _memoryRanges[key] = !(_memoryRanges[key] ?? false);
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('app_memoryRanges', _memoryRanges.toString());
   }
 
   /// 设置配置文件目录

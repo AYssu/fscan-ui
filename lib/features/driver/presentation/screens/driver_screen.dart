@@ -35,25 +35,8 @@ class _DriverScreenState extends State<DriverScreen> {
   bool restartRequired = false;
   Timer? _processMonitorTimer;
 
-  // 内存范围
-  Map<String, bool> memoryRanges = {
-    'Java_heap': true,    // Jh - Java Heap
-    'C_heap': false,      // Ch - C++ Heap
-    'C_alloc': true,      // Ca - C++ Alloc
-    'C_data': true,       // Cd - C++ .data
-    'C_bss': true,        // Cb - C++ .bss
-    'PPSSPP': false,      // PS - PPSSPP
-    'Anonymous': true,    // A - Anonymous
-    'Java': false,        // J - Java
-    'Stack': false,       // S - Stack
-    'Ashmem': false,      // As - Ashmem
-    'Video': false,       // V - Video
-    'Other': false,       // O - Other
-    'Bad': false,         // B - Bad
-    'Code_app': true,     // Xa - Code app
-    'Code_exec': false,   // Xe - Code execution
-    'All': false,
-  };
+  // 内存范围 - 从AppConfig加载（持久化）
+  late Map<String, bool> memoryRanges;
 
   // 进程列表
   List<ProcessInfo> allProcesses = [];
@@ -62,6 +45,9 @@ class _DriverScreenState extends State<DriverScreen> {
   @override
   void initState() {
     super.initState();
+    // 从AppConfig加载内存范围配置
+    final appConfig = context.read<AppConfig>();
+    memoryRanges = Map.from(appConfig.memoryRanges);
     // 延迟到 build 完成后再加载，避免 setState during build 错误
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadSavedProcess();
@@ -160,7 +146,6 @@ class _DriverScreenState extends State<DriverScreen> {
   void _stopProcessMonitor() {
     _processMonitorTimer?.cancel();
     _processMonitorTimer = null;
-    logger.info('DriverScreen', '进程监听已停止');
   }
 
   /// 刷新进程PID（通过包名获取最新PID）
@@ -511,7 +496,7 @@ class _DriverScreenState extends State<DriverScreen> {
       case 'Other': return 'O';
       case 'Bad': return 'B';
       case 'Code_app': return 'Xa';
-      case 'Code_exec': return 'Xe';
+      case 'Code_system': return 'Xs';
       case 'All': return 'Al';
       default: return key.substring(0, 2);
     }
@@ -534,7 +519,7 @@ class _DriverScreenState extends State<DriverScreen> {
       case 'Other': return 'Other';
       case 'Bad': return 'Bad';
       case 'Code_app': return 'Code app';
-      case 'Code_exec': return 'Code execution';
+      case 'Code_system': return 'Code system';
       case 'All': return 'All';
       default: return key;
     }
@@ -675,9 +660,14 @@ class _DriverScreenState extends State<DriverScreen> {
                   child: const Text('取消'),
                 ),
                 FilledButton(
-                  onPressed: () {
+                  onPressed: () async {
                     setState(() => memoryRanges = tempSelected);
-                    Navigator.pop(context);
+                    // 保存到AppConfig（持久化）
+                    final appConfig = context.read<AppConfig>();
+                    await appConfig.setMemoryRanges(memoryRanges);
+                    if (mounted) {
+                      Navigator.pop(context);
+                    }
                   },
                   child: const Text('确定'),
                 ),
@@ -727,11 +717,7 @@ class _DriverScreenState extends State<DriverScreen> {
                 // 检测按钮
                 IconButton(
                   icon: Icon(Icons.bug_report, color: Theme.of(context).colorScheme.primary),
-                  onPressed: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('检测功能开发中...')),
-                    );
-                  },
+                  onPressed: _testReader,
                   tooltip: '检测',
                 ),
                 const SizedBox(width: 4),
@@ -961,6 +947,110 @@ class _DriverScreenState extends State<DriverScreen> {
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+        ],
+      ),
+    );
+  }
+
+  /// 读取器测试
+  Future<void> _testReader() async {
+    if (!mounted) return;
+
+    final wsService = context.read<WsService>();
+    final appConfig = context.read<AppConfig>();
+
+    if (!wsService.isConnected) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('未连接到服务器')),
+        );
+      }
+      return;
+    }
+
+    // 显示加载中
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      useRootNavigator: true,
+      barrierDismissible: false,
+      builder: (context) => const AlertDialog(
+        content: SizedBox(
+          width: 200,
+          height: 100,
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('正在测试读取器...'),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    // 获取读取器类型
+    String readerType = '';
+    switch (appConfig.rwMethod) {
+      case 0:
+        readerType = 'syscall';
+        break;
+      case 1:
+        readerType = 'pread';
+        break;
+      case 2:
+        readerType = appConfig.libPath;
+        break;
+    }
+
+    // 调用测试
+    final result = await wsService.readerTest(readerType);
+
+    // 关闭加载弹窗
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    // 显示结果
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      useRootNavigator: true,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              result != null ? Icons.check_circle : Icons.error,
+              color: result != null ? Colors.green : Colors.red,
+            ),
+            const SizedBox(width: 8),
+            Text(result != null ? '测试通过' : '测试失败'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Container(
+            width: double.maxFinite,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              result ?? '测试失败，请检查配置',
+              style: const TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12,
+              ),
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context, rootNavigator: true).pop(),
+            child: const Text('确定'),
+          ),
         ],
       ),
     );

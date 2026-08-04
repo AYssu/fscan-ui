@@ -34,25 +34,8 @@ class _ScanScreenState extends State<ScanScreen> {
   String? _currentTaskId;
   bool _showTerminal = false;
 
-  // 内存范围
-  Map<String, bool> memoryRanges = {
-    'Java_heap': true,
-    'C_heap': false,
-    'C_alloc': true,
-    'C_data': true,
-    'C_bss': true,
-    'PPSSPP': false,
-    'Anonymous': true,
-    'Java': false,
-    'Stack': false,
-    'Ashmem': false,
-    'Video': false,
-    'Other': false,
-    'Bad': false,
-    'Code_app': true,
-    'Code_exec': false,
-    'All': false,
-  };
+  // 内存范围 - 从AppConfig获取（持久化）
+  Map<String, bool> get memoryRanges => context.read<AppConfig>().memoryRanges;
 
   @override
   void initState() {
@@ -1531,7 +1514,7 @@ class _ScanScreenState extends State<ScanScreen> {
       return;
     }
 
-    // 构建扫描参数
+    // 构建扫描参数 - 与core-fs中的memsetting枚举匹配
     final ranges = <String>[];
     if (memoryRanges['Anonymous'] == true) ranges.add('Anonymous');
     if (memoryRanges['C_alloc'] == true) ranges.add('C_alloc');
@@ -1543,7 +1526,7 @@ class _ScanScreenState extends State<ScanScreen> {
     if (memoryRanges['Stack'] == true) ranges.add('Stack');
     if (memoryRanges['Video'] == true) ranges.add('Video');
     if (memoryRanges['Code_app'] == true) ranges.add('Code_app');
-    if (memoryRanges['Code_exec'] == true) ranges.add('Code_exec');
+    if (memoryRanges['Code_system'] == true) ranges.add('Code_system');
     if (memoryRanges['Ashmem'] == true) ranges.add('Ashmem');
     if (memoryRanges['Other'] == true) ranges.add('Other');
     if (memoryRanges['Bad'] == true) ranges.add('Bad');

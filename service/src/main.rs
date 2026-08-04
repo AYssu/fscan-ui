@@ -97,6 +97,7 @@ enum CommandHandler {
     GetNextFile,
     GetFiles,
     StartScan,
+    ReaderTest,
     Compare,
     CompareNorm,
 }
@@ -308,6 +309,30 @@ impl CommandHandler {
                 // StartScan 在 Service::handle_message 中特殊处理
                 WsMessage::error(id, "StartScan should be handled by Service")
             }
+            Self::ReaderTest => {
+                let reader_type = params
+                    .and_then(|p| p.get("reader"))
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("");
+
+                info!("  ├─ Processing: reader-test reader={}", reader_type);
+
+                match handlers::reader_test(reader_type) {
+                    Ok(output) => {
+                        WsMessage::response(
+                            id,
+                            serde_json::json!({
+                                "success": true,
+                                "output": output
+                            }),
+                        )
+                    }
+                    Err(e) => {
+                        info!("  ├─ Reader test failed: {}", e);
+                        WsMessage::error(id, &format!("Reader test failed: {}", e))
+                    }
+                }
+            }
             Self::Compare => {
                 // Compare 在 Service::handle_message 中特殊处理
                 WsMessage::error(id, "Compare should be handled by Service")
@@ -343,6 +368,7 @@ impl Service {
         handlers.insert("start_scan".to_string(), CommandHandler::StartScan);
         handlers.insert("compare".to_string(), CommandHandler::Compare);
         handlers.insert("compare_norm".to_string(), CommandHandler::CompareNorm);
+        handlers.insert("reader_test".to_string(), CommandHandler::ReaderTest);
 
         // 创建扫描输出广播通道
         let (scan_output_tx, _) = broadcast::channel(1000);

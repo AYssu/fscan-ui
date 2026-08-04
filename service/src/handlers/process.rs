@@ -222,6 +222,31 @@ pub fn get_files_in_dir(dir: &str, extensions: &[String]) -> Result<Vec<serde_js
     Ok(all_files)
 }
 
+/// 通过执行外部 scan reader-test 命令测试读取器
+pub fn reader_test(reader_type: &str) -> Result<String, String> {
+    let binary = get_scan_binary();
+    info!("  Executing: {} reader-test --reader {}", binary, reader_type);
+
+    let mut cmd = Command::new(&binary);
+    cmd.arg("reader-test");
+    if !reader_type.is_empty() {
+        cmd.arg("--reader").arg(reader_type);
+    }
+
+    let output = cmd.output()
+        .map_err(|e| format!("Failed to execute {}: {}", binary, e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if !output.status.success() {
+        return Err(format!("Command failed: {}", stderr));
+    }
+
+    info!("  Reader test output: {} bytes", stdout.len());
+    Ok(stdout)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

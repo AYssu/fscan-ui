@@ -239,6 +239,7 @@ class WsService extends ChangeNotifier {
   String? _getAppInfoRequestId;
   String? _getNextFileRequestId;
   String? _startScanRequestId;
+  String? _readerTestRequestId;
   String? _getProcessesRequestId;
   String? _getModulesRequestId;
   String? _getFilesRequestId;
@@ -393,6 +394,57 @@ class WsService extends ChangeNotifier {
 
     // 超时处理
     Timer(const Duration(seconds: 15), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 读取器自测
+  Future<String?> readerTest(String readerType) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法进行读取器测试');
+      return null;
+    }
+
+    final completer = Completer<String?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _readerTestRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['output'] != null) {
+            completer.complete(data['output'] as String);
+          } else {
+            completer.complete(null);
+          }
+        } else {
+          completer.complete(null);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _readerTestRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'reader_test',
+        'params': {
+          'reader': readerType,
+        },
+      },
+      id: _readerTestRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 30), () {
       if (!completer.isCompleted) {
         completer.complete(null);
         subscription.cancel();
