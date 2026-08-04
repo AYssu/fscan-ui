@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/network/ws_service.dart';
+import 'package:fscan/core/utils/logger.dart';
+import 'package:fscan/shared/widgets/terminal_panel.dart';
 
 /// 对比模式枚举
 enum CompareMode {
-  basic,    // 基础对比
-  fast,     // 极速对比
-  single,   // 单线程对比
+  basic,    // 基础对比 (-m text)
+  fast,     // 极速对比 (-m bin)
+  brutal,   // 暴力对比 (compare-norm)
 }
 
 /// 文件数据模型
@@ -65,22 +67,49 @@ class _CompareScreenState extends State<CompareScreen> {
   bool indexCheck = true;
   int nopLevel = 0;
   bool matchOptimize = true; // 匹配优化，极速对比专用
-  List<CompareFile> selectedFiles = [];
   bool is32Bit = false; // 进程位数
   String outputPath = '/storage/emulated/0/fscan/a1.txt';
+
+  // 每个模式独立的文件选择列表
+  Map<CompareMode, List<CompareFile>> _selectedFilesByMode = {
+    CompareMode.basic: [],
+    CompareMode.fast: [],
+    CompareMode.brutal: [],
+  };
+
+  // 当前模式选中的文件
+  List<CompareFile> get selectedFiles => _selectedFilesByMode[compareMode] ?? [];
 
   // 文件相关
   List<CompareFile> availableFiles = [];
   bool _isLoadingFiles = false;
 
+  // 每个模式独立的终端状态
+  Map<CompareMode, String?> _taskIdByMode = {
+    CompareMode.basic: null,
+    CompareMode.fast: null,
+    CompareMode.brutal: null,
+  };
+  Map<CompareMode, bool> _showTerminalByMode = {
+    CompareMode.basic: false,
+    CompareMode.fast: false,
+    CompareMode.brutal: false,
+  };
+
+  // 每个模式独立的终端面板
+  Map<CompareMode, Widget?> _terminalPanels = {};
+
+  // 当前模式的终端状态
+  String? get _currentTaskId => _taskIdByMode[compareMode];
+  bool get _showTerminal => _showTerminalByMode[compareMode] ?? false;
+
   // 当前模式支持的最大文件数
   int get maxFileCount {
     switch (compareMode) {
       case CompareMode.basic:
-        return 2;
       case CompareMode.fast:
-      case CompareMode.single:
-        return 8;
+      case CompareMode.brutal:
+        return 2;
     }
   }
 
@@ -89,6 +118,7 @@ class _CompareScreenState extends State<CompareScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadFiles();
+      _generateOutputPath();  // 初始化时生成输出路径
     });
   }
 
@@ -101,7 +131,27 @@ class _CompareScreenState extends State<CompareScreen> {
     try {
       final wsService = context.read<WsService>();
       final appConfig = context.read<AppConfig>();
-      final files = await wsService.getFiles(appConfig.dataPath, ['out']);
+
+      // 确定目录：如果有选中的包名，则使用扫描数据路径+包名
+      String dir = appConfig.dataPath;
+      if (appConfig.selectedPackageName != null) {
+        dir = '$dir/${appConfig.selectedPackageName}';
+      }
+
+      // 根据模式加载不同类型的文件
+      // 基础对比/极速对比: 输入 .out 文件 (扫描输出)
+      // 暴力对比: 输入 .norm 文件 (扫描输出)
+      List<String> extensions;
+      switch (compareMode) {
+        case CompareMode.basic:
+        case CompareMode.fast:
+          extensions = ['out'];
+          break;
+        case CompareMode.brutal:
+          extensions = ['norm'];
+          break;
+      }
+      final files = await wsService.getFiles(dir, extensions);
 
       if (files != null && mounted) {
         setState(() {
@@ -115,6 +165,43 @@ class _CompareScreenState extends State<CompareScreen> {
       if (mounted) {
         setState(() => _isLoadingFiles = false);
       }
+    }
+  }
+
+  /// 生成输出路径
+  Future<void> _generateOutputPath() async {
+    final appConfig = context.read<AppConfig>();
+    final wsService = context.read<WsService>();
+
+    // 确定目录：如果有选中的包名，则使用扫描数据路径+包名
+    String dir = appConfig.dataPath;
+    if (appConfig.selectedPackageName != null) {
+      dir = '$dir/${appConfig.selectedPackageName}';
+    }
+
+    // 根据对比模式选择扩展名
+    // 基础对比: txt, 极速对比: out, 暴力对比: norm
+    String extension;
+    switch (compareMode) {
+      case CompareMode.basic:
+        extension = 'txt';
+        break;
+      case CompareMode.fast:
+        extension = 'out';
+        break;
+      case CompareMode.brutal:
+        extension = 'norm';
+        break;
+    }
+
+    // 调用获取下一个文件路径
+    final path = await wsService.getNextFile(dir, extension);
+
+    if (path != null && mounted) {
+      setState(() {
+        outputPath = path;
+      });
+      logger.info('CompareScreen', '输出路径已生成: $path');
     }
   }
 
@@ -142,6 +229,13 @@ class _CompareScreenState extends State<CompareScreen> {
 
             // 操作按钮
             _buildActionButtons(),
+
+            // 终端面板（嵌入式）
+            if (_showTerminal && _currentTaskId != null) ...[
+              const SizedBox(height: 16),
+              _buildTerminalCard(),
+            ],
+
             const SizedBox(height: 32),
           ],
         ),
@@ -163,9 +257,9 @@ class _CompareScreenState extends State<CompareScreen> {
                 const SizedBox(width: 8),
                 Text('对比模式', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(width: 4),
-                _buildHelpIcon('对比模式说明', '基础对比：功能最多，但是速度会慢一些，因为加了很多条件的判断。\n\n'
-                    '极速对比：最快，但是舍弃了到指针地址级别的判断，对比速度快一些。\n\n'
-                    '单线程：因为按照模块进行多线程分配，默认单线程是大核，如果多线程但只有一个线程触发，有可能分配到小核，也会触发合并操作，速度反而慢。如果量少，单线程比多线程快。'),
+                _buildHelpIcon('对比模式说明', '基础对比：输出文本格式，功能最多，但是速度会慢一些。\n\n'
+                    '极速对比：输出二进制格式，最快，但是舍弃了到指针地址级别的判断。\n\n'
+                    '暴力对比：对比 .norm 归一化文件，速度最快但精度较低，需要反复筛选。'),
               ],
             ),
             const SizedBox(height: 12),
@@ -182,19 +276,20 @@ class _CompareScreenState extends State<CompareScreen> {
                     label: Text('极速对比'),
                   ),
                   ButtonSegment(
-                    value: CompareMode.single,
-                    label: Text('单线程'),
+                    value: CompareMode.brutal,
+                    label: Text('暴力对比'),
                   ),
                 ],
                 selected: {compareMode},
-                onSelectionChanged: (Set<CompareMode> selected) {
-                  setState(() {
-                    compareMode = selected.first;
-                    // 切换模式时清理超出限制的文件
-                    if (selectedFiles.length > maxFileCount) {
-                      selectedFiles = selectedFiles.sublist(0, maxFileCount);
-                    }
-                  });
+                onSelectionChanged: (Set<CompareMode> selected) async {
+                  final newMode = selected.first;
+                  if (newMode != compareMode) {
+                    setState(() {
+                      compareMode = newMode;
+                    });
+                    // 切换模式时刷新输出路径
+                    await _generateOutputPath();
+                  }
                 },
               ),
             ),
@@ -208,7 +303,7 @@ class _CompareScreenState extends State<CompareScreen> {
   Widget _buildConfigCard() {
     final isBasic = compareMode == CompareMode.basic;
     final isFast = compareMode == CompareMode.fast;
-    final isSingle = compareMode == CompareMode.single;
+    final isBrutal = compareMode == CompareMode.brutal;
 
     return Card(
       child: Column(
@@ -232,126 +327,75 @@ class _CompareScreenState extends State<CompareScreen> {
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // 限制数量 - 所有模式都有
-          ListTile(
-            title: const Text('限制数量'),
-            trailing: Text(_formatMaxDbNum(maxDbNum), style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-            onTap: editMaxDbNum,
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-
-          // 线程数量 - 基础对比和极速对比
-          if (!isSingle) ...[
+          // 限制数量 - 基础对比和极速对比
+          if (!isBrutal) ...[
             ListTile(
-              title: const Text('线程数量'),
-              trailing: Text('$threadNum 核', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
-              onTap: editThreadNum,
+              title: const Text('限制数量'),
+              trailing: Text(_formatMaxDbNum(maxDbNum), style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+              onTap: editMaxDbNum,
             ),
             const Divider(height: 1, indent: 16, endIndent: 16),
-          ],
-
-          // 匹配优化 - 仅极速对比
-          if (isFast) ...[
-            SwitchListTile(
-              title: Row(
-                children: [
-                  const Text('匹配优化'),
-                  const SizedBox(width: 4),
-                  _buildHelpIcon('匹配优化说明', '如果匹配到数据则放弃后续的匹配，优先跳出循环寻找下一个节点的数据。\n\n'
-                      '默认开启。\n\n'
-                      '如果对数据量要求全的可以关闭，但是速度会慢一些。'),
-                ],
-              ),
-              subtitle: Text(matchOptimize ? '开启' : '关闭'),
-              value: matchOptimize,
-              onChanged: (v) => setState(() => matchOptimize = v),
-            ),
-          ],
-
-          // 去除层级 - 仅基础对比
-          if (isBasic) ...[
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            ListTile(
-              title: Row(
-                children: [
-                  const Text('去除层级'),
-                  const SizedBox(width: 4),
-                  _buildHelpIcon('去除层级说明', '例如：libUE4.so[Cd][1]+0xfff+0x111+0x222+0x333\n\n'
-                      '选中第2层，则是 0x222 这层不参与对比。\n\n'
-                      '主要用于数组，或者隔层某层变化的情况。\n\n'
-                      '由于倒数层级跟随层级变化，推荐配合层级限制到某一层使用。'),
-                ],
-              ),
-              trailing: Text(
-                nopLevel == 0 ? '暂无' : '第$nopLevel层',
-                style: TextStyle(color: Theme.of(context).colorScheme.primary),
-              ),
-              onTap: editNopLevel,
-            ),
-          ],
-
-          // 下标判断 - 仅基础对比
-          if (isBasic) ...[
-            const Divider(height: 1, indent: 16, endIndent: 16),
-            SwitchListTile(
-              title: Row(
-                children: [
-                  const Text('下标判断'),
-                  const SizedBox(width: 4),
-                  _buildHelpIcon('下标判断说明', '下标指的是 libUE4.so[Cd][1]、libUE4.so[Cd][2]、libUE4.so[Cd][3] 这种。\n\n'
-                      '因为内存段不一样，下标(index)不一样。\n\n'
-                      '主要是针对游戏混淆，第一次在1，第二次在2的这种情况。\n\n'
-                      '可以使用"去除层级"进行优化，但是理论上大部分游戏均需要单独索引对比，非必要勿关闭。'),
-                ],
-              ),
-              subtitle: Text(indexCheck ? '开启' : '关闭'),
-              value: indexCheck,
-              onChanged: (v) => setState(() => indexCheck = v),
-            ),
           ],
 
           // 输出路径
-          const Divider(height: 1, indent: 16, endIndent: 16),
           ListTile(
             title: const Text('输出路径'),
-            trailing: Text(
+            subtitle: Text(
               outputPath.split('/').last,
-              style: TextStyle(color: Theme.of(context).colorScheme.primary, fontSize: 12),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontSize: 12,
+                fontFamily: 'monospace',
+              ),
             ),
-          ),
-
-          // 进程位数 - 所有模式都有
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-            child: Row(
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('进程位数'),
-                const Spacer(),
-                SizedBox(
-                  width: 180,
-                  child: SegmentedButton<bool>(
-                    segments: const [
-                      ButtonSegment(
-                        value: true,
-                        label: Text('32位'),
-                      ),
-                      ButtonSegment(
-                        value: false,
-                        label: Text('64位'),
-                      ),
-                    ],
-                    selected: {is32Bit},
-                    onSelectionChanged: (Set<bool> selected) {
-                      setState(() {
-                        is32Bit = selected.first;
-                      });
-                    },
-                  ),
+                TextButton.icon(
+                  onPressed: _generateOutputPath,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('自动生成'),
                 ),
+                const SizedBox(width: 4),
+                Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ],
             ),
           ),
+
+          // 进程位数 - 基础对比和极速对比
+          if (!isBrutal) ...[
+            const Divider(height: 1, indent: 16, endIndent: 16),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              child: Row(
+                children: [
+                  const Text('进程位数'),
+                  const Spacer(),
+                  SizedBox(
+                    width: 180,
+                    child: SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(
+                          value: true,
+                          label: Text('32位'),
+                        ),
+                        ButtonSegment(
+                          value: false,
+                          label: Text('64位'),
+                        ),
+                      ],
+                      selected: {is32Bit},
+                      onSelectionChanged: (Set<bool> selected) {
+                        setState(() {
+                          is32Bit = selected.first;
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -359,6 +403,20 @@ class _CompareScreenState extends State<CompareScreen> {
 
   /// 文件选择卡片
   Widget _buildFileCard() {
+    // 根据对比模式确定文件扩展名提示
+    String fileHint;
+    switch (compareMode) {
+      case CompareMode.basic:
+        fileHint = '.out';
+        break;
+      case CompareMode.fast:
+        fileHint = '.out';
+        break;
+      case CompareMode.brutal:
+        fileHint = '.norm';
+        break;
+    }
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -400,7 +458,7 @@ class _CompareScreenState extends State<CompareScreen> {
                         children: [
                           Icon(Icons.add_circle_outline, color: Theme.of(context).colorScheme.primary),
                           const SizedBox(width: 8),
-                          Text('点击选择 .out 文件', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+                          Text('点击选择 $fileHint 文件', style: TextStyle(color: Theme.of(context).colorScheme.primary)),
                         ],
                       )
                     : Column(
@@ -454,7 +512,9 @@ class _CompareScreenState extends State<CompareScreen> {
                                 IconButton(
                                   icon: const Icon(Icons.close, size: 18),
                                   onPressed: () {
-                                    setState(() => selectedFiles.remove(file));
+                                    setState(() {
+                                      _selectedFilesByMode[compareMode]?.remove(file);
+                                    });
                                   },
                                 ),
                               ],
@@ -481,6 +541,57 @@ class _CompareScreenState extends State<CompareScreen> {
         style: FilledButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 16),
         ),
+      ),
+    );
+  }
+
+  /// 终端面板卡片
+  Widget _buildTerminalCard() {
+    // 获取或创建当前模式的终端面板
+    if (!_terminalPanels.containsKey(compareMode) || _terminalPanels[compareMode] == null) {
+      _terminalPanels[compareMode] = TerminalPanel(
+        key: ValueKey('terminal_$compareMode'),
+        taskId: _taskIdByMode[compareMode],
+      );
+    }
+
+    return Card(
+      child: Column(
+        children: [
+          // 标题栏
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.terminal, size: 20, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                Text('终端输出', style: Theme.of(context).textTheme.titleSmall),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20),
+                  onPressed: () {
+                    setState(() {
+                      _showTerminalByMode[compareMode] = false;
+                      _taskIdByMode[compareMode] = null;
+                      _terminalPanels[compareMode] = null;
+                    });
+                  },
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+          ),
+          // 终端内容
+          SizedBox(
+            height: 250,
+            child: _terminalPanels[compareMode],
+          ),
+        ],
       ),
     );
   }
@@ -889,6 +1000,20 @@ class _CompareScreenState extends State<CompareScreen> {
 
     if (!mounted) return;
 
+    // 根据模式确定文件类型提示
+    String fileTypeHint;
+    switch (compareMode) {
+      case CompareMode.basic:
+        fileTypeHint = '基础对比 - 选择两个 .out 文件';
+        break;
+      case CompareMode.fast:
+        fileTypeHint = '极速对比 - 选择两个 .out 文件';
+        break;
+      case CompareMode.brutal:
+        fileTypeHint = '暴力对比 - 选择两个 .norm 文件';
+        break;
+    }
+
     showDialog(
       context: context,
       builder: (context) {
@@ -902,8 +1027,21 @@ class _CompareScreenState extends State<CompareScreen> {
             return AlertDialog(
               title: Row(
                 children: [
-                  const Text('选择文件'),
-                  const Spacer(),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('选择文件'),
+                        Text(
+                          fileTypeHint,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   IconButton(
                     icon: const Icon(Icons.refresh),
                     onPressed: () async {
@@ -1003,7 +1141,9 @@ class _CompareScreenState extends State<CompareScreen> {
                 ),
                 FilledButton(
                   onPressed: () {
-                    setState(() => selectedFiles = tempSelected);
+                    setState(() {
+                      _selectedFilesByMode[compareMode] = List.from(tempSelected);
+                    });
                     Navigator.pop(context);
                   },
                   child: Text('确定 (${tempSelected.length})'),
@@ -1017,7 +1157,7 @@ class _CompareScreenState extends State<CompareScreen> {
   }
 
   /// 开始对比
-  void startCompare() {
+  Future<void> startCompare() async {
     // 验证文件数量
     if (selectedFiles.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1040,10 +1180,88 @@ class _CompareScreenState extends State<CompareScreen> {
       return;
     }
 
-    // TODO: 实现对比逻辑
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('开始${compareMode == CompareMode.basic ? "基础" : compareMode == CompareMode.fast ? "极速" : "单线程"}对比...')),
-    );
+    // 获取文件路径列表
+    final inputPaths = selectedFiles.map((f) => f.path).toList();
+
+    // 解析层级限制
+    int? levelMin;
+    int? levelMax;
+    if (levelLimit != '无限制') {
+      final parts = levelLimit.split('-');
+      levelMin = int.tryParse(parts[0]);
+      if (parts.length > 1) {
+        levelMax = int.tryParse(parts[1]);
+      } else {
+        levelMax = levelMin;
+      }
+    }
+
+    // 解析限制数量
+    int? limit;
+    if (maxDbNum != '无限制') {
+      limit = int.tryParse(maxDbNum);
+    }
+
+    final wsService = context.read<WsService>();
+    String? taskId;
+
+    try {
+      if (compareMode == CompareMode.brutal) {
+        // 暴力对比 - 使用 compare-norm 命令
+        taskId = await wsService.compareNormFiles(
+          inputFiles: inputPaths,
+          outputFile: outputPath,
+          minLevel: levelMin,
+          maxLevel: levelMax,
+        );
+      } else {
+        // 基础对比/极速对比 - 使用 compare 命令
+        final mode = compareMode == CompareMode.basic ? 'text' : 'bin';
+        taskId = await wsService.compareFiles(
+          inputFiles: inputPaths,
+          outputFile: outputPath,
+          mode: mode,
+          is32Bit: is32Bit,
+          limit: limit,
+          levelMin: levelMin,
+          levelMax: levelMax,
+        );
+      }
+
+      if (taskId != null && mounted) {
+        setState(() {
+          _taskIdByMode[compareMode] = taskId;
+          _showTerminalByMode[compareMode] = true;
+          // 创建新的终端面板
+          _terminalPanels[compareMode] = TerminalPanel(
+            key: ValueKey('terminal_${compareMode}_$taskId'),
+            taskId: taskId,
+          );
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('对比任务已启动'),
+            duration: Duration(seconds: 1),
+          ),
+        );
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('启动对比失败'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('对比失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   /// 格式化层级限制显示

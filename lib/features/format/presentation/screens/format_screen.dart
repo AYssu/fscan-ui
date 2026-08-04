@@ -56,7 +56,14 @@ class _FormatScreenState extends State<FormatScreen> {
     try {
       final wsService = context.read<WsService>();
       final appConfig = context.read<AppConfig>();
-      final files = await wsService.getFiles(appConfig.dataPath, ['out', 'bin']);
+
+      // 确定目录：如果有选中的包名，则使用扫描数据路径+包名
+      String dir = appConfig.dataPath;
+      if (appConfig.selectedPackageName != null) {
+        dir = '$dir/${appConfig.selectedPackageName}';
+      }
+
+      final files = await wsService.getFiles(dir, ['out', 'bin']);
 
       if (files != null && mounted) {
         setState(() {

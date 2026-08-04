@@ -20,14 +20,15 @@ class _ScanScreenState extends State<ScanScreen> {
   List<String> searchAddresses = [];
   int scanLevel = 6;
   String scanRange = '0x7D0';
-  bool handlePageFault = false;
+  bool handleB4000000 = false; // 处理 0xb4000000
+  bool handlePageFault = false; // 缺页处理
   bool is32Bit = false;
   bool byteAlignment = false;
   bool pageAlignment = false;
   int scanCores = 8;
   bool moduleExtension = false;
   bool negativeOffset = false;
-  bool isFastMode = false; // true=快速模式, false=普通模式
+  bool isBrutalMode = false; // true=暴力格式, false=通用格式
   bool readProtected = false; // 读取受限内存
   String outputPath = '/storage/emulated/0/fscan/a1.out';
   String? _currentTaskId;
@@ -488,16 +489,35 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // 处理 0xb4000000
+          // 处理 0xb4000000（暂未实现）
           SwitchListTile(
-            title: const Text('处理 0xb4000000'),
-            subtitle: Text(handlePageFault ? '开启' : '关闭'),
-            value: handlePageFault,
-            onChanged: (v) => setState(() => handlePageFault = v),
+            title: Row(
+              children: [
+                const Text('处理 0xb4000000'),
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '暂未实现',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            subtitle: const Text('处理 Android 特殊内存地址'),
+            value: false,
+            onChanged: null,
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // 4字节对齐
+          // 4字节对齐（暂未实现）
           SwitchListTile(
             title: Row(
               children: [
@@ -506,15 +526,30 @@ class _ScanScreenState extends State<ScanScreen> {
                 _buildHelpIcon('4字节对齐说明', 'GG修改器默认是4字节对齐（地址 % 4 = 0）。\n\n'
                     '但 0x3 这种地址也是存在指针的，不建议开启。\n\n'
                     '大部分指针都是规则的4字节，如果找不到指针时可以尝试开启。'),
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '暂未实现',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
               ],
             ),
             subtitle: Text(byteAlignment ? '开启' : '关闭'),
             value: byteAlignment,
-            onChanged: (v) => setState(() => byteAlignment = v),
+            onChanged: null,
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // 跨页处理
+          // 跨页处理（暂未实现）
           SwitchListTile(
             title: Row(
               children: [
@@ -523,15 +558,30 @@ class _ScanScreenState extends State<ScanScreen> {
                 _buildHelpIcon('跨页处理说明', '由于指针在 4096 字节的内存页边界被截断，导致扫描不出来。\n\n'
                     '默认不推荐开启。\n\n'
                     '场景：你的友人A分享了指针链条，你死活扫不出来这条，其他的可以，大概率是这个问题。'),
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '暂未实现',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
               ],
             ),
             subtitle: Text(pageAlignment ? '开启' : '关闭'),
             value: pageAlignment,
-            onChanged: (v) => setState(() => pageAlignment = v),
+            onChanged: null,
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // 模块扩展
+          // 模块扩展（暂未实现）
           SwitchListTile(
             title: Row(
               children: [
@@ -540,15 +590,30 @@ class _ScanScreenState extends State<ScanScreen> {
                 _buildHelpIcon('模块扩展说明', '开启后处理腾讯游戏对模块单独处理导致模块 index 变多的问题。\n\n'
                     '部分 index 是随机的，开启后有一定解决能力。\n\n'
                     '如果没有特别需要，不建议开启。'),
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '暂未实现',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
               ],
             ),
             subtitle: Text(moduleExtension ? '开启' : '关闭'),
             value: moduleExtension,
-            onChanged: (v) => setState(() => moduleExtension = v),
+            onChanged: null,
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // 负偏移
+          // 负偏移（暂未实现）
           SwitchListTile(
             title: Row(
               children: [
@@ -558,11 +623,26 @@ class _ScanScreenState extends State<ScanScreen> {
                     '场景：支持反向查找指针链条\n'
                     '例如：libUE4.so[Cd][1]+0xffff-0x28+0x24-0x4\n\n'
                     '开启后可以搜索负数偏移的指针。'),
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '暂未实现',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
               ],
             ),
             subtitle: Text(negativeOffset ? '开启' : '关闭'),
             value: negativeOffset,
-            onChanged: (v) => setState(() => negativeOffset = v),
+            onChanged: null,
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
@@ -637,18 +717,18 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // 扫描模式（最下面）
+          // 数据格式（最下面）
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
             child: Row(
               children: [
                 Row(
                   children: [
-                    const Text('扫描模式'),
+                    const Text('数据格式'),
                     const SizedBox(width: 4),
-                    _buildHelpIcon('扫描模式说明', '快速模式会选择性过滤已存在的指针，加快指针扫描速度和合成速度。\n\n'
-                        '缺点：会丢失部分完整的指针链条。\n\n'
-                        '普通使用完全足够，如果扫描不出来指针或者追求完整的可以开启。'),
+                    _buildHelpIcon('数据格式说明', '通用格式：一般情况下数据量较小，兼容性好。\n\n'
+                        '暴力格式：只能使用暴力对比，对比速度大幅加快。但指针对比精度不够，会产生垃圾指针，需要反复筛选过滤。\n\n'
+                        '建议：优先使用通用格式，只有在通用格式找不到或需要快速扫描时才使用暴力格式。'),
                   ],
                 ),
                 const Spacer(),
@@ -658,16 +738,22 @@ class _ScanScreenState extends State<ScanScreen> {
                     segments: const [
                       ButtonSegment(
                         value: false,
-                        label: Text('普通'),
+                        label: Text('通用'),
                       ),
                       ButtonSegment(
                         value: true,
-                        label: Text('快速'),
+                        label: Text('暴力'),
                       ),
                     ],
-                    selected: {isFastMode},
-                    onSelectionChanged: (Set<bool> selected) {
-                      setState(() => isFastMode = selected.first);
+                    selected: {isBrutalMode},
+                    onSelectionChanged: (Set<bool> selected) async {
+                      final newIsBrutal = selected.first;
+                      // 切换格式时重新获取输出文件路径
+                      if (newIsBrutal != isBrutalMode) {
+                        setState(() => isBrutalMode = newIsBrutal);
+                        // 重新生成输出路径（通用用out，暴力用norm）
+                        await _generateOutputPath();
+                      }
                     },
                   ),
                 ),
@@ -716,8 +802,11 @@ class _ScanScreenState extends State<ScanScreen> {
       dir = '$dir/${appConfig.selectedPackageName}';
     }
 
+    // 根据数据格式选择扩展名：通用用out，暴力用norm
+    final extension = isBrutalMode ? 'norm' : 'out';
+
     // 调用获取下一个文件路径
-    final path = await wsService.getNextFile(dir, 'out');
+    final path = await wsService.getNextFile(dir, extension);
 
     if (path != null && mounted) {
       final fileName = path.split('/').last;
@@ -1471,8 +1560,9 @@ class _ScanScreenState extends State<ScanScreen> {
       count: scanCores,
       size: 1 << 20,
       ranges: ranges,
-      fastMode: isFastMode,
+      brutalMode: isBrutalMode,
       pageFault: handlePageFault,
+      handleB4000000: handleB4000000,
     );
 
     if (taskId != null && mounted) {

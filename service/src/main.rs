@@ -95,7 +95,10 @@ enum CommandHandler {
     GetAppInfo,
     GetModules,
     GetNextFile,
+    GetFiles,
     StartScan,
+    Compare,
+    CompareNorm,
 }
 
 impl CommandHandler {
@@ -231,6 +234,39 @@ impl CommandHandler {
                     }
                 }
             }
+            Self::GetFiles => {
+                let dir = params
+                    .and_then(|p| p.get("dir"))
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("/sdcard/fscan");
+                let extensions = params
+                    .and_then(|p| p.get("extensions"))
+                    .and_then(|e| e.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect::<Vec<String>>()
+                    })
+                    .unwrap_or_else(|| vec!["out".to_string()]);
+
+                info!("  ├─ Processing: get_files dir={} exts={:?}", dir, extensions);
+
+                match handlers::get_files_in_dir(dir, &extensions) {
+                    Ok(files) => {
+                        WsMessage::response(
+                            id,
+                            serde_json::json!({
+                                "success": true,
+                                "files": files
+                            }),
+                        )
+                    }
+                    Err(e) => {
+                        info!("  ├─ Get files failed: {}", e);
+                        WsMessage::error(id, &format!("Failed to get files: {}", e))
+                    }
+                }
+            }
             Self::GetModules => {
                 let package_name = params
                     .and_then(|p| p.get("packageName"))
@@ -272,6 +308,14 @@ impl CommandHandler {
                 // StartScan 在 Service::handle_message 中特殊处理
                 WsMessage::error(id, "StartScan should be handled by Service")
             }
+            Self::Compare => {
+                // Compare 在 Service::handle_message 中特殊处理
+                WsMessage::error(id, "Compare should be handled by Service")
+            }
+            Self::CompareNorm => {
+                // CompareNorm 在 Service::handle_message 中特殊处理
+                WsMessage::error(id, "CompareNorm should be handled by Service")
+            }
         }
     }
 }
@@ -295,7 +339,10 @@ impl Service {
         handlers.insert("get_app_info".to_string(), CommandHandler::GetAppInfo);
         handlers.insert("get_modules".to_string(), CommandHandler::GetModules);
         handlers.insert("get_next_file".to_string(), CommandHandler::GetNextFile);
+        handlers.insert("get_files".to_string(), CommandHandler::GetFiles);
         handlers.insert("start_scan".to_string(), CommandHandler::StartScan);
+        handlers.insert("compare".to_string(), CommandHandler::Compare);
+        handlers.insert("compare_norm".to_string(), CommandHandler::CompareNorm);
 
         // 创建扫描输出广播通道
         let (scan_output_tx, _) = broadcast::channel(1000);
@@ -355,6 +402,60 @@ impl Service {
                     return Some(response);
                 }
 
+                // 特殊处理compare命令
+                if command == "compare" {
+                    let task_id = uuid::Uuid::new_v4().to_string();
+                    info!("  ├─ Starting compare task: {}", task_id);
+
+                    // 立即返回任务ID
+                    let response = WsMessage::response(
+                        msg.id.clone(),
+                        serde_json::json!({
+                            "success": true,
+                            "taskId": task_id,
+                            "message": "对比任务已启动"
+                        }),
+                    );
+
+                    // 启动后台对比任务
+                    let scan_tx = self.scan_output_tx.clone();
+                    let params = params.cloned().unwrap_or(serde_json::json!({}));
+                    let task_id_clone = task_id.clone();
+
+                    tokio::spawn(async move {
+                        Self::run_compare_task(task_id_clone, params, scan_tx).await;
+                    });
+
+                    return Some(response);
+                }
+
+                // 特殊处理compare_norm命令
+                if command == "compare_norm" {
+                    let task_id = uuid::Uuid::new_v4().to_string();
+                    info!("  ├─ Starting compare-norm task: {}", task_id);
+
+                    // 立即返回任务ID
+                    let response = WsMessage::response(
+                        msg.id.clone(),
+                        serde_json::json!({
+                            "success": true,
+                            "taskId": task_id,
+                            "message": "暴力对比任务已启动"
+                        }),
+                    );
+
+                    // 启动后台对比任务
+                    let scan_tx = self.scan_output_tx.clone();
+                    let params = params.cloned().unwrap_or(serde_json::json!({}));
+                    let task_id_clone = task_id.clone();
+
+                    tokio::spawn(async move {
+                        Self::run_compare_norm_task(task_id_clone, params, scan_tx).await;
+                    });
+
+                    return Some(response);
+                }
+
                 if let Some(handler) = self.handlers.get(command) {
                     Some(handler.execute(msg.id.clone(), params).await)
                 } else {
@@ -405,10 +506,6 @@ impl Service {
             cmd.arg("-o").arg(offset.to_string());
         }
 
-        if let Some(outfile) = params.get("outputFile").and_then(|f| f.as_str()) {
-            cmd.arg("-f").arg(outfile);
-        }
-
         if let Some(count) = params.get("count").and_then(|c| c.as_i64()) {
             cmd.arg("--count").arg(count.to_string());
         }
@@ -425,15 +522,29 @@ impl Service {
             }
         }
 
-        if let Some(fast) = params.get("fastMode").and_then(|f| f.as_bool()) {
-            if fast {
-                cmd.arg("--rest");
+        // 数据格式处理：通用格式用 -f，暴力格式用 --norm
+        let is_brutal = params.get("brutalMode").and_then(|b| b.as_bool()).unwrap_or(false);
+        if is_brutal {
+            // 暴力格式：使用 --norm 参数输出归一化文件
+            if let Some(norm_file) = params.get("normFile").and_then(|n| n.as_str()) {
+                cmd.arg("--norm").arg(norm_file);
+            }
+        } else {
+            // 通用格式：使用 -f 参数输出文件
+            if let Some(outfile) = params.get("outputFile").and_then(|f| f.as_str()) {
+                cmd.arg("-f").arg(outfile);
             }
         }
 
         if let Some(page_fault) = params.get("pageFault").and_then(|p| p.as_bool()) {
             if page_fault {
                 cmd.arg("--page-fault");
+            }
+        }
+
+        if let Some(handle_b4) = params.get("handleB4000000").and_then(|b| b.as_bool()) {
+            if handle_b4 {
+                cmd.arg("--handle-b4000000");
             }
         }
 
@@ -540,6 +651,301 @@ impl Service {
                         "taskId": task_id,
                         "type": "error",
                         "message": format!("启动扫描失败: {}", e)
+                    })),
+                };
+                let _ = scan_tx.send(error_msg.encode());
+            }
+        }
+    }
+
+    /// 运行对比任务（基础对比/极速对比）
+    async fn run_compare_task(task_id: String, params: serde_json::Value, scan_tx: broadcast::Sender<String>) {
+        use tokio::process::Command;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let binary = handlers::get_scan_binary();
+
+        // 构建命令参数
+        let mut cmd = Command::new(&binary);
+        cmd.arg("compare");
+
+        // 输入文件
+        if let Some(files) = params.get("inputFiles").and_then(|f| f.as_array()) {
+            for file in files {
+                if let Some(file_str) = file.as_str() {
+                    cmd.arg("-i").arg(file_str);
+                }
+            }
+        }
+
+        // 输出文件
+        if let Some(output) = params.get("outputFile").and_then(|o| o.as_str()) {
+            cmd.arg("-o").arg(output);
+        }
+
+        // 输出模式
+        if let Some(mode) = params.get("mode").and_then(|m| m.as_str()) {
+            cmd.arg("-m").arg(mode);
+        }
+
+        // 进程位数
+        if let Some(bit) = params.get("bit").and_then(|b| b.as_i64()) {
+            cmd.arg("-b").arg(bit.to_string());
+        }
+
+        // 限制数量
+        if let Some(limit) = params.get("limit").and_then(|l| l.as_i64()) {
+            cmd.arg("--limit").arg(limit.to_string());
+        }
+
+        // 层级限制
+        if let Some(level_min) = params.get("levelMin").and_then(|l| l.as_i64()) {
+            cmd.arg("--level-min").arg(level_min.to_string());
+        }
+
+        if let Some(level_max) = params.get("levelMax").and_then(|l| l.as_i64()) {
+            cmd.arg("--level-max").arg(level_max.to_string());
+        }
+
+        info!("  ├─ Executing compare command");
+
+        // 发送开始消息
+        let start_msg = WsMessage {
+            msg_type: MessageType::Stream,
+            id: Some(task_id.clone()),
+            data: Some(serde_json::json!({
+                "taskId": task_id,
+                "type": "start",
+                "message": "对比开始"
+            })),
+        };
+        let _ = scan_tx.send(start_msg.encode());
+
+        // 执行命令并获取输出
+        match cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn() {
+            Ok(mut child) => {
+                let stdout = child.stdout.take().unwrap();
+                let stderr = child.stderr.take().unwrap();
+
+                // 读取stdout
+                let stdout_task_id = task_id.clone();
+                let stdout_tx = scan_tx.clone();
+                let stdout_handle = tokio::spawn(async move {
+                    let reader = BufReader::new(stdout);
+                    let mut lines = reader.lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        info!("  ├─ [stdout] {}", line);
+                        let stream_msg = WsMessage {
+                            msg_type: MessageType::Stream,
+                            id: Some(stdout_task_id.clone()),
+                            data: Some(serde_json::json!({
+                                "taskId": stdout_task_id,
+                                "type": "stdout",
+                                "line": line
+                            })),
+                        };
+                        let _ = stdout_tx.send(stream_msg.encode());
+                    }
+                    info!("  ├─ [stdout] 读取完成");
+                });
+
+                // 读取stderr
+                let stderr_task_id = task_id.clone();
+                let stderr_tx = scan_tx.clone();
+                let stderr_handle = tokio::spawn(async move {
+                    let reader = BufReader::new(stderr);
+                    let mut lines = reader.lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        info!("  ├─ [stderr] {}", line);
+                        let stream_msg = WsMessage {
+                            msg_type: MessageType::Stream,
+                            id: Some(stderr_task_id.clone()),
+                            data: Some(serde_json::json!({
+                                "taskId": stderr_task_id,
+                                "type": "stderr",
+                                "line": line
+                            })),
+                        };
+                        let _ = stderr_tx.send(stream_msg.encode());
+                    }
+                    info!("  ├─ [stderr] 读取完成");
+                });
+
+                // 等待任务完成
+                info!("  ├─ 等待子进程完成...");
+                let status = child.wait().await;
+                info!("  ├─ 等待stdout读取完成...");
+                let _ = stdout_handle.await;
+                info!("  ├─ 等待stderr读取完成...");
+                let _ = stderr_handle.await;
+                info!("  ├─ 所有任务完成");
+
+                // 发送完成消息
+                let exit_code = status.map(|s| s.code()).unwrap_or(None);
+                let complete_msg = WsMessage {
+                    msg_type: MessageType::Stream,
+                    id: Some(task_id.clone()),
+                    data: Some(serde_json::json!({
+                        "taskId": task_id,
+                        "type": "complete",
+                        "exitCode": exit_code,
+                        "success": exit_code == Some(0)
+                    })),
+                };
+                info!("  ├─ 发送完成消息");
+                let _ = scan_tx.send(complete_msg.encode());
+
+                info!("  ├─ Compare task completed: {} exit_code={:?}", task_id, exit_code);
+            }
+            Err(e) => {
+                error!("  ├─ Failed to start compare: {}", e);
+                let error_msg = WsMessage {
+                    msg_type: MessageType::Stream,
+                    id: Some(task_id.clone()),
+                    data: Some(serde_json::json!({
+                        "taskId": task_id,
+                        "type": "error",
+                        "message": format!("启动对比失败: {}", e)
+                    })),
+                };
+                let _ = scan_tx.send(error_msg.encode());
+            }
+        }
+    }
+
+    /// 运行暴力对比任务（compare-norm）
+    async fn run_compare_norm_task(task_id: String, params: serde_json::Value, scan_tx: broadcast::Sender<String>) {
+        use tokio::process::Command;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let binary = handlers::get_scan_binary();
+
+        // 构建命令参数
+        let mut cmd = Command::new(&binary);
+        cmd.arg("compare-norm");
+
+        // 输入文件
+        if let Some(files) = params.get("inputFiles").and_then(|f| f.as_array()) {
+            for file in files {
+                if let Some(file_str) = file.as_str() {
+                    cmd.arg("-i").arg(file_str);
+                }
+            }
+        }
+
+        // 输出文件
+        if let Some(output) = params.get("outputFile").and_then(|o| o.as_str()) {
+            cmd.arg("-o").arg(output);
+        }
+
+        // 层级限制
+        if let Some(min_level) = params.get("minLevel").and_then(|l| l.as_i64()) {
+            cmd.arg("--min-level").arg(min_level.to_string());
+        }
+
+        if let Some(max_level) = params.get("maxLevel").and_then(|l| l.as_i64()) {
+            cmd.arg("--max-level").arg(max_level.to_string());
+        }
+
+        info!("  ├─ Executing compare-norm command");
+
+        // 发送开始消息
+        let start_msg = WsMessage {
+            msg_type: MessageType::Stream,
+            id: Some(task_id.clone()),
+            data: Some(serde_json::json!({
+                "taskId": task_id,
+                "type": "start",
+                "message": "暴力对比开始"
+            })),
+        };
+        let _ = scan_tx.send(start_msg.encode());
+
+        // 执行命令并获取输出
+        match cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn() {
+            Ok(mut child) => {
+                let stdout = child.stdout.take().unwrap();
+                let stderr = child.stderr.take().unwrap();
+
+                // 读取stdout
+                let stdout_task_id = task_id.clone();
+                let stdout_tx = scan_tx.clone();
+                let stdout_handle = tokio::spawn(async move {
+                    let reader = BufReader::new(stdout);
+                    let mut lines = reader.lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        info!("  ├─ [stdout] {}", line);
+                        let stream_msg = WsMessage {
+                            msg_type: MessageType::Stream,
+                            id: Some(stdout_task_id.clone()),
+                            data: Some(serde_json::json!({
+                                "taskId": stdout_task_id,
+                                "type": "stdout",
+                                "line": line
+                            })),
+                        };
+                        let _ = stdout_tx.send(stream_msg.encode());
+                    }
+                    info!("  ├─ [stdout] 读取完成");
+                });
+
+                // 读取stderr
+                let stderr_task_id = task_id.clone();
+                let stderr_tx = scan_tx.clone();
+                let stderr_handle = tokio::spawn(async move {
+                    let reader = BufReader::new(stderr);
+                    let mut lines = reader.lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        info!("  ├─ [stderr] {}", line);
+                        let stream_msg = WsMessage {
+                            msg_type: MessageType::Stream,
+                            id: Some(stderr_task_id.clone()),
+                            data: Some(serde_json::json!({
+                                "taskId": stderr_task_id,
+                                "type": "stderr",
+                                "line": line
+                            })),
+                        };
+                        let _ = stderr_tx.send(stream_msg.encode());
+                    }
+                    info!("  ├─ [stderr] 读取完成");
+                });
+
+                // 等待任务完成
+                info!("  ├─ 等待子进程完成...");
+                let status = child.wait().await;
+                info!("  ├─ 等待stdout读取完成...");
+                let _ = stdout_handle.await;
+                info!("  ├─ 等待stderr读取完成...");
+                let _ = stderr_handle.await;
+                info!("  ├─ 所有任务完成");
+
+                // 发送完成消息
+                let exit_code = status.map(|s| s.code()).unwrap_or(None);
+                let complete_msg = WsMessage {
+                    msg_type: MessageType::Stream,
+                    id: Some(task_id.clone()),
+                    data: Some(serde_json::json!({
+                        "taskId": task_id,
+                        "type": "complete",
+                        "exitCode": exit_code,
+                        "success": exit_code == Some(0)
+                    })),
+                };
+                info!("  ├─ 发送完成消息");
+                let _ = scan_tx.send(complete_msg.encode());
+
+                info!("  ├─ Compare-norm task completed: {} exit_code={:?}", task_id, exit_code);
+            }
+            Err(e) => {
+                error!("  ├─ Failed to start compare-norm: {}", e);
+                let error_msg = WsMessage {
+                    msg_type: MessageType::Stream,
+                    id: Some(task_id.clone()),
+                    data: Some(serde_json::json!({
+                        "taskId": task_id,
+                        "type": "error",
+                        "message": format!("启动暴力对比失败: {}", e)
                     })),
                 };
                 let _ = scan_tx.send(error_msg.encode());

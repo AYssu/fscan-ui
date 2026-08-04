@@ -166,6 +166,62 @@ pub fn get_next_file_path(dir: &str, extension: &str) -> Result<String, String> 
     Ok(stdout)
 }
 
+/// 通过执行外部 scan get-files 命令获取目录中的文件列表
+pub fn get_files_in_dir(dir: &str, extensions: &[String]) -> Result<Vec<serde_json::Value>, String> {
+    let binary = get_scan_binary();
+
+    // 构建命令：./scan get-files -d <dir> -e <extension>
+    // 注意：scan 命令每次只能查询一个扩展名，需要多次调用
+    let mut all_files = Vec::new();
+
+    for ext in extensions {
+        info!("  Executing: {} get-files -d {} -e {}", binary, dir, ext);
+
+        let output = Command::new(&binary)
+            .arg("get-files")
+            .arg("-d")
+            .arg(dir)
+            .arg("-e")
+            .arg(ext)
+            .output()
+            .map_err(|e| format!("Failed to execute {}: {}", binary, e))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("Command failed: {}", stderr));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        info!("  Raw output: {}", &stdout[..stdout.len().min(200)]);
+
+        // 解析 JSON 响应
+        #[derive(serde::Deserialize)]
+        struct FilesResponse {
+            success: bool,
+            files: Vec<serde_json::Value>,
+        }
+
+        let response: FilesResponse = serde_json::from_str(&stdout)
+            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+        if !response.success {
+            return Err("Command returned success=false".to_string());
+        }
+
+        all_files.extend(response.files);
+    }
+
+    // 按修改时间排序（最新的在前）
+    all_files.sort_by(|a, b| {
+        let time_a = a.get("modified").and_then(|v| v.as_str()).unwrap_or("0");
+        let time_b = b.get("modified").and_then(|v| v.as_str()).unwrap_or("0");
+        time_b.cmp(time_a)
+    });
+
+    info!("  Found {} files in {}", all_files.len(), dir);
+    Ok(all_files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

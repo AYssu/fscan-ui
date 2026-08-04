@@ -245,6 +245,8 @@ class WsService extends ChangeNotifier {
   String? _convertFormatRequestId;
   String? _previewConvertedRequestId;
   String? _debugPointersRequestId;
+  String? _compareRequestId;
+  String? _compareNormRequestId;
 
   /// 获取运行中的应用列表（通过执行外部scan命令）
   Future<List<Map<String, dynamic>>?> getApps() async {
@@ -411,9 +413,11 @@ class WsService extends ChangeNotifier {
     required int count,
     required int size,
     required List<String> ranges,
-    required bool fastMode,
+    required bool brutalMode,
     required bool pageFault,
+    required bool handleB4000000,
     String? reader,
+    String? normFile,
   }) async {
     if (!isConnected) {
       logger.warning('WebSocket', '未连接，无法启动扫描');
@@ -446,13 +450,30 @@ class WsService extends ChangeNotifier {
       'addresses': addresses,
       'depth': depth,
       'offset': offset,
-      'outputFile': outputFile,
       'count': count,
       'size': size,
       'ranges': ranges,
-      'fastMode': fastMode,
       'pageFault': pageFault,
+      'brutalMode': brutalMode,
+      'handleB4000000': handleB4000000,
     };
+
+    // 根据数据格式选择输出参数
+    // 通用格式(brutalMode=false): 使用 -f 参数 (outputFile)
+    // 暴力格式(brutalMode=true): 使用 --norm 参数 (normFile)
+    if (!brutalMode) {
+      // 通用格式：输出文件
+      params['outputFile'] = outputFile;
+    } else {
+      // 暴力格式：输出归一化文件
+      if (normFile != null && normFile.isNotEmpty) {
+        params['normFile'] = normFile;
+      } else {
+        // 如果没有指定normFile，使用outputFile路径但改为.norm扩展名
+        final normPath = outputFile.replaceAll(RegExp(r'\.(out|bin)$'), '.norm');
+        params['normFile'] = normPath;
+      }
+    }
 
     if (packageName != null) {
       params['packageName'] = packageName;
@@ -797,6 +818,155 @@ class WsService extends ChangeNotifier {
 
     // 超时处理
     Timer(const Duration(seconds: 30), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 对比两个链文件（基础对比/极速对比）
+  Future<String?> compareFiles({
+    required List<String> inputFiles,
+    String? outputFile,
+    required String mode,  // text=基础对比, bin=极速对比
+    required bool is32Bit,
+    int? limit,
+    int? levelMin,
+    int? levelMax,
+  }) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法执行对比');
+      return null;
+    }
+
+    final completer = Completer<String?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _compareRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['taskId'] != null) {
+            completer.complete(data['taskId'] as String);
+          } else {
+            completer.complete(null);
+          }
+        } else {
+          completer.complete(null);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _compareRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    final Map<String, dynamic> params = {
+      'inputFiles': inputFiles,
+      'mode': mode,
+      'bit': is32Bit ? 32 : 64,
+    };
+
+    if (outputFile != null) {
+      params['outputFile'] = outputFile;
+    }
+
+    if (limit != null && limit > 0) {
+      params['limit'] = limit;
+    }
+
+    if (levelMin != null) {
+      params['levelMin'] = levelMin;
+    }
+
+    if (levelMax != null) {
+      params['levelMax'] = levelMax;
+    }
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'compare',
+        'params': params,
+      },
+      id: _compareRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 60), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 对比两个 .norm 文件（暴力对比）
+  Future<String?> compareNormFiles({
+    required List<String> inputFiles,
+    String? outputFile,
+    int? minLevel,
+    int? maxLevel,
+  }) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法执行暴力对比');
+      return null;
+    }
+
+    final completer = Completer<String?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _compareNormRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['taskId'] != null) {
+            completer.complete(data['taskId'] as String);
+          } else {
+            completer.complete(null);
+          }
+        } else {
+          completer.complete(null);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _compareNormRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    final Map<String, dynamic> params = {
+      'inputFiles': inputFiles,
+    };
+
+    if (outputFile != null) {
+      params['outputFile'] = outputFile;
+    }
+
+    if (minLevel != null) {
+      params['minLevel'] = minLevel;
+    }
+
+    if (maxLevel != null) {
+      params['maxLevel'] = maxLevel;
+    }
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'compare_norm',
+        'params': params,
+      },
+      id: _compareNormRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 60), () {
       if (!completer.isCompleted) {
         completer.complete(null);
         subscription.cancel();
