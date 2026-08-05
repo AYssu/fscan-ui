@@ -230,11 +230,23 @@ class _CompareScreenState extends State<CompareScreen> {
             // 操作按钮
             _buildActionButtons(),
 
-            // 终端面板（嵌入式）
-            if (_showTerminal && _currentTaskId != null) ...[
-              const SizedBox(height: 16),
-              _buildTerminalCard(),
-            ],
+            // 终端面板（所有模式的面板都保留在树中，用 Offstage 控制显示/隐藏）
+            ...CompareMode.values.map((mode) {
+              final isCurrentMode = mode == compareMode;
+              final showTerminal = _showTerminalByMode[mode] ?? false;
+              final hasTask = _taskIdByMode[mode] != null;
+              final shouldShow = isCurrentMode && showTerminal && hasTask;
+
+              return Offstage(
+                offstage: !shouldShow,
+                child: Column(
+                  children: [
+                    const SizedBox(height: 16),
+                    _buildTerminalCardForMode(mode),
+                  ],
+                ),
+              );
+            }),
 
             const SizedBox(height: 32),
           ],
@@ -547,12 +559,27 @@ class _CompareScreenState extends State<CompareScreen> {
 
   /// 终端面板卡片
   Widget _buildTerminalCard() {
-    // 获取或创建当前模式的终端面板
-    if (!_terminalPanels.containsKey(compareMode) || _terminalPanels[compareMode] == null) {
-      _terminalPanels[compareMode] = TerminalPanel(
-        key: ValueKey('terminal_$compareMode'),
-        taskId: _taskIdByMode[compareMode],
-      );
+    return _buildTerminalCardForMode(compareMode);
+  }
+
+  /// 为指定模式构建终端面板卡片
+  Widget _buildTerminalCardForMode(CompareMode mode) {
+    // 获取当前模式的终端面板，如果不存在则创建一个新的
+    final existingPanel = _terminalPanels[mode];
+    final terminalPanel = existingPanel ?? TerminalPanel(
+      key: ValueKey('terminal_${mode}_${_taskIdByMode[mode]}'),
+      taskId: _taskIdByMode[mode],
+      onComplete: () {
+        // 对比完成后自动刷新输出路径
+        if (mode == compareMode) {
+          _generateOutputPath();
+        }
+      },
+    );
+
+    // 保存新创建的面板
+    if (existingPanel == null) {
+      _terminalPanels[mode] = terminalPanel;
     }
 
     return Card(
@@ -575,9 +602,9 @@ class _CompareScreenState extends State<CompareScreen> {
                   icon: const Icon(Icons.close, size: 20),
                   onPressed: () {
                     setState(() {
-                      _showTerminalByMode[compareMode] = false;
-                      _taskIdByMode[compareMode] = null;
-                      _terminalPanels[compareMode] = null;
+                      _showTerminalByMode[mode] = false;
+                      _taskIdByMode[mode] = null;
+                      _terminalPanels[mode] = null;
                     });
                   },
                   padding: EdgeInsets.zero,
@@ -589,7 +616,7 @@ class _CompareScreenState extends State<CompareScreen> {
           // 终端内容
           SizedBox(
             height: 250,
-            child: _terminalPanels[compareMode],
+            child: terminalPanel,
           ),
         ],
       ),
@@ -1180,6 +1207,35 @@ class _CompareScreenState extends State<CompareScreen> {
       return;
     }
 
+    // 检查输出路径是否已存在
+    final wsService = context.read<WsService>();
+    final fileExists = await wsService.checkFileExists(outputPath);
+    if (fileExists && mounted) {
+      final shouldRefresh = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('输出文件已存在'),
+          content: Text('输出路径 ${outputPath.split('/').last} 已存在，是否刷新输出路径？'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldRefresh == true) {
+        await _generateOutputPath();
+      } else {
+        return;
+      }
+    }
+
     // 获取文件路径列表
     final inputPaths = selectedFiles.map((f) => f.path).toList();
 
@@ -1202,7 +1258,6 @@ class _CompareScreenState extends State<CompareScreen> {
       limit = int.tryParse(maxDbNum);
     }
 
-    final wsService = context.read<WsService>();
     String? taskId;
 
     try {

@@ -100,6 +100,9 @@ enum CommandHandler {
     ReaderTest,
     Compare,
     CompareNorm,
+    FilterListTargets,
+    FilterRun,
+    CheckFileExists,
 }
 
 impl CommandHandler {
@@ -341,6 +344,110 @@ impl CommandHandler {
                 // CompareNorm 在 Service::handle_message 中特殊处理
                 WsMessage::error(id, "CompareNorm should be handled by Service")
             }
+            Self::FilterListTargets => {
+                let input = params
+                    .and_then(|p| p.get("input"))
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("");
+                let mode = params
+                    .and_then(|p| p.get("mode"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("bin");
+                let bit = params
+                    .and_then(|p| p.get("bit"))
+                    .and_then(|b| b.as_i64())
+                    .unwrap_or(64) as i32;
+                let value_type = params
+                    .and_then(|p| p.get("valueType"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0) as i32;
+                let pid = params
+                    .and_then(|p| p.get("pid"))
+                    .and_then(|p| p.as_i64())
+                    .unwrap_or(0) as i32;
+
+                info!("  ├─ Processing: filter_list_targets input={} mode={} bit={} pid={}", input, mode, bit, pid);
+
+                match handlers::filter_list_targets(input, mode, bit, value_type, pid) {
+                    Ok(result) => {
+                        WsMessage::response(id, result)
+                    }
+                    Err(e) => {
+                        info!("  ├─ Filter list targets failed: {}", e);
+                        WsMessage::error(id, &format!("Filter list targets failed: {}", e))
+                    }
+                }
+            }
+            Self::FilterRun => {
+                let input = params
+                    .and_then(|p| p.get("input"))
+                    .and_then(|i| i.as_str())
+                    .unwrap_or("");
+                let mode = params
+                    .and_then(|p| p.get("mode"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("bin");
+                let bit = params
+                    .and_then(|p| p.get("bit"))
+                    .and_then(|b| b.as_i64())
+                    .unwrap_or(64) as i32;
+                let target = params
+                    .and_then(|p| p.get("target"))
+                    .and_then(|t| t.as_u64())
+                    .unwrap_or(0);
+                let output = params
+                    .and_then(|p| p.get("output"))
+                    .and_then(|o| o.as_str())
+                    .unwrap_or("");
+                let pid = params
+                    .and_then(|p| p.get("pid"))
+                    .and_then(|p| p.as_i64())
+                    .unwrap_or(0) as i32;
+                let output_mode = params
+                    .and_then(|p| p.get("outputMode"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("bin");
+                let reader = params
+                    .and_then(|p| p.get("reader"))
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("");
+
+                info!("  ├─ Processing: filter_run input={} mode={} bit={} target=0x{:X} pid={} outputMode={} reader={}", input, mode, bit, target, pid, output_mode, reader);
+
+                match handlers::filter_run(input, mode, bit, target, output, pid, output_mode, reader) {
+                    Ok(result) => {
+                        WsMessage::response(id, result)
+                    }
+                    Err(e) => {
+                        info!("  ├─ Filter run failed: {}", e);
+                        WsMessage::error(id, &format!("Filter run failed: {}", e))
+                    }
+                }
+            }
+            Self::CheckFileExists => {
+                let path = params
+                    .and_then(|p| p.get("path"))
+                    .and_then(|p| p.as_str())
+                    .unwrap_or("");
+
+                info!("  ├─ Processing: check_file_exists path={}", path);
+
+                match handlers::check_file_exists(path) {
+                    Ok(exists) => {
+                        WsMessage::response(
+                            id,
+                            serde_json::json!({
+                                "success": true,
+                                "exists": exists
+                            }),
+                        )
+                    }
+                    Err(e) => {
+                        info!("  ├─ Check file exists failed: {}", e);
+                        WsMessage::error(id, &format!("Check file exists failed: {}", e))
+                    }
+                }
+            }
         }
     }
 }
@@ -369,6 +476,8 @@ impl Service {
         handlers.insert("compare".to_string(), CommandHandler::Compare);
         handlers.insert("compare_norm".to_string(), CommandHandler::CompareNorm);
         handlers.insert("reader_test".to_string(), CommandHandler::ReaderTest);
+        handlers.insert("filter_list_targets".to_string(), CommandHandler::FilterListTargets);
+        handlers.insert("check_file_exists".to_string(), CommandHandler::CheckFileExists);
 
         // 创建扫描输出广播通道
         let (scan_output_tx, _) = broadcast::channel(1000);
@@ -477,6 +586,33 @@ impl Service {
 
                     tokio::spawn(async move {
                         Self::run_compare_norm_task(task_id_clone, params, scan_tx).await;
+                    });
+
+                    return Some(response);
+                }
+
+                // 特殊处理filter_run命令
+                if command == "filter_run" {
+                    let task_id = uuid::Uuid::new_v4().to_string();
+                    info!("  ├─ Starting filter task: {}", task_id);
+
+                    // 立即返回任务ID
+                    let response = WsMessage::response(
+                        msg.id.clone(),
+                        serde_json::json!({
+                            "success": true,
+                            "taskId": task_id,
+                            "message": "过滤任务已启动"
+                        }),
+                    );
+
+                    // 启动后台过滤任务
+                    let scan_tx = self.scan_output_tx.clone();
+                    let params = params.cloned().unwrap_or(serde_json::json!({}));
+                    let task_id_clone = task_id.clone();
+
+                    tokio::spawn(async move {
+                        Self::run_filter_task(task_id_clone, params, scan_tx).await;
                     });
 
                     return Some(response);
@@ -972,6 +1108,165 @@ impl Service {
                         "taskId": task_id,
                         "type": "error",
                         "message": format!("启动暴力对比失败: {}", e)
+                    })),
+                };
+                let _ = scan_tx.send(error_msg.encode());
+            }
+        }
+    }
+
+    /// 运行过滤任务
+    async fn run_filter_task(task_id: String, params: serde_json::Value, scan_tx: broadcast::Sender<String>) {
+        use tokio::process::Command;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let binary = handlers::get_scan_binary();
+
+        // 构建命令参数
+        let mut cmd = Command::new(&binary);
+        cmd.arg("filter");
+
+        // 输入文件
+        if let Some(input) = params.get("input").and_then(|i| i.as_str()) {
+            cmd.arg("-i").arg(input);
+        }
+
+        // 模式
+        if let Some(mode) = params.get("mode").and_then(|m| m.as_str()) {
+            cmd.arg("-m").arg(mode);
+        }
+
+        // 进程位数
+        if let Some(bit) = params.get("bit").and_then(|b| b.as_i64()) {
+            cmd.arg("-b").arg(bit.to_string());
+        }
+
+        // PID
+        if let Some(pid) = params.get("pid").and_then(|p| p.as_i64()) {
+            cmd.arg("--pid").arg(pid.to_string());
+        }
+
+        // 目标地址
+        if let Some(target) = params.get("target").and_then(|t| t.as_u64()) {
+            cmd.arg("--target").arg(format!("0x{:X}", target));
+        }
+
+        // 输出文件
+        if let Some(output) = params.get("output").and_then(|o| o.as_str()) {
+            cmd.arg("-o").arg(output);
+        }
+
+        // 输出模式
+        if let Some(output_mode) = params.get("outputMode").and_then(|m| m.as_str()) {
+            cmd.arg("--output-mode").arg(output_mode);
+        }
+
+        // Reader
+        if let Some(reader) = params.get("reader").and_then(|r| r.as_str()) {
+            if !reader.is_empty() {
+                cmd.arg("--reader").arg(reader);
+            }
+        }
+
+        info!("  ├─ Executing filter command");
+
+        // 发送开始消息
+        let start_msg = WsMessage {
+            msg_type: MessageType::Stream,
+            id: Some(task_id.clone()),
+            data: Some(serde_json::json!({
+                "taskId": task_id,
+                "type": "start",
+                "message": "过滤开始"
+            })),
+        };
+        let _ = scan_tx.send(start_msg.encode());
+
+        // 执行命令并获取输出
+        match cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn() {
+            Ok(mut child) => {
+                let stdout = child.stdout.take().unwrap();
+                let stderr = child.stderr.take().unwrap();
+
+                // 读取stdout
+                let stdout_task_id = task_id.clone();
+                let stdout_tx = scan_tx.clone();
+                let stdout_handle = tokio::spawn(async move {
+                    let reader = BufReader::new(stdout);
+                    let mut lines = reader.lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        info!("  ├─ [stdout] {}", line);
+                        let stream_msg = WsMessage {
+                            msg_type: MessageType::Stream,
+                            id: Some(stdout_task_id.clone()),
+                            data: Some(serde_json::json!({
+                                "taskId": stdout_task_id,
+                                "type": "stdout",
+                                "line": line
+                            })),
+                        };
+                        let _ = stdout_tx.send(stream_msg.encode());
+                    }
+                    info!("  ├─ [stdout] 读取完成");
+                });
+
+                // 读取stderr
+                let stderr_task_id = task_id.clone();
+                let stderr_tx = scan_tx.clone();
+                let stderr_handle = tokio::spawn(async move {
+                    let reader = BufReader::new(stderr);
+                    let mut lines = reader.lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        info!("  ├─ [stderr] {}", line);
+                        let stream_msg = WsMessage {
+                            msg_type: MessageType::Stream,
+                            id: Some(stderr_task_id.clone()),
+                            data: Some(serde_json::json!({
+                                "taskId": stderr_task_id,
+                                "type": "stderr",
+                                "line": line
+                            })),
+                        };
+                        let _ = stderr_tx.send(stream_msg.encode());
+                    }
+                    info!("  ├─ [stderr] 读取完成");
+                });
+
+                // 等待任务完成
+                info!("  ├─ 等待子进程完成...");
+                let status = child.wait().await;
+                info!("  ├─ 等待stdout读取完成...");
+                let _ = stdout_handle.await;
+                info!("  ├─ 等待stderr读取完成...");
+                let _ = stderr_handle.await;
+                info!("  ├─ 所有任务完成");
+
+                // 发送完成消息
+                let exit_code = status.map(|s| s.code()).unwrap_or(None);
+                let complete_msg = WsMessage {
+                    msg_type: MessageType::Stream,
+                    id: Some(task_id.clone()),
+                    data: Some(serde_json::json!({
+                        "taskId": task_id,
+                        "type": "complete",
+                        "exitCode": exit_code,
+                        "success": exit_code == Some(0)
+                    })),
+                };
+                info!("  ├─ 发送完成消息");
+                let _ = scan_tx.send(complete_msg.encode());
+
+                info!("  ├─ Filter task completed: {} exit_code={:?}", task_id, exit_code);
+            }
+            Err(e) => {
+                error!("  ├─ Failed to start filter: {}", e);
+                let error_msg = WsMessage {
+                    msg_type: MessageType::Stream,
+                    id: Some(task_id.clone()),
+                    data: Some(serde_json::json!({
+                        "taskId": task_id,
+                        "type": "error",
+                        "message": format!("启动过滤失败: {}", e)
                     })),
                 };
                 let _ = scan_tx.send(error_msg.encode());

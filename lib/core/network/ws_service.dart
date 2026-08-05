@@ -73,6 +73,10 @@ class WsService extends ChangeNotifier {
   final StreamController<WsMessage> _messageController =
       StreamController<WsMessage>.broadcast();
 
+  // 状态流控制器
+  final StreamController<WsStatus> _statusController =
+      StreamController<WsStatus>.broadcast();
+
   // 回调
   Function(WsMessage)? onMessage;
   Function(String)? onError;
@@ -85,6 +89,7 @@ class WsService extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   bool get isConnected => _status == WsStatus.connected;
   Stream<WsMessage> get messageStream => _messageController.stream;
+  Stream<WsStatus> get statusStream => _statusController.stream;
 
   /// 初始化，从本地存储加载 URL 并自动连接
   Future<void> init() async {
@@ -115,6 +120,7 @@ class WsService extends ChangeNotifier {
     _status = WsStatus.connecting;
     _errorMessage = null;
     notifyListeners();
+    _statusController.add(_status);
 
     logger.info('WebSocket', '正在连接到: $url');
 
@@ -140,6 +146,7 @@ class WsService extends ChangeNotifier {
       _status = WsStatus.connected;
       _reconnectAttempts = 0;
       notifyListeners();
+      _statusController.add(_status);
 
       // 启动心跳
       _startHeartbeat();
@@ -163,6 +170,7 @@ class WsService extends ChangeNotifier {
     _status = WsStatus.disconnected;
     _errorMessage = null;
     notifyListeners();
+    _statusController.add(_status);
 
     onDisconnected?.call();
     logger.info('WebSocket', '已断开连接');
@@ -248,6 +256,9 @@ class WsService extends ChangeNotifier {
   String? _debugPointersRequestId;
   String? _compareRequestId;
   String? _compareNormRequestId;
+  String? _checkFileExistsRequestId;
+  String? _filterListTargetsRequestId;
+  String? _filterRunRequestId;
 
   /// 获取运行中的应用列表（通过执行外部scan命令）
   Future<List<Map<String, dynamic>>?> getApps() async {
@@ -1028,6 +1039,183 @@ class WsService extends ChangeNotifier {
     return completer.future;
   }
 
+  /// 检查文件是否存在
+  Future<bool> checkFileExists(String filePath) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法检查文件');
+      return false;
+    }
+
+    final completer = Completer<bool>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _checkFileExistsRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          completer.complete(data['exists'] == true);
+        } else {
+          completer.complete(false);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _checkFileExistsRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'check_file_exists',
+        'params': {
+          'path': filePath,
+        },
+      },
+      id: _checkFileExistsRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 10), () {
+      if (!completer.isCompleted) {
+        completer.complete(false);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 列出过滤目标地址（对应 filter -l 命令）
+  Future<Map<String, dynamic>?> filterListTargets({
+    required String inputFile,
+    required String mode, // bin 或 text
+    required bool is32Bit,
+    required int pid,
+    int valueType = 0,
+  }) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法列出过滤目标');
+      return null;
+    }
+
+    final completer = Completer<Map<String, dynamic>?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _filterListTargetsRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          completer.complete(data);
+        } else {
+          completer.complete(null);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _filterListTargetsRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'filter_list_targets',
+        'params': {
+          'input': inputFile,
+          'mode': mode,
+          'bit': is32Bit ? 32 : 64,
+          'valueType': valueType,
+          'pid': pid,
+        },
+      },
+      id: _filterListTargetsRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 30), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// 执行过滤（对应 filter 命令）
+  Future<String?> filterRun({
+    required String inputFile,
+    required String mode, // bin 或 text
+    required bool is32Bit,
+    required int targetAddress,
+    required String outputFile,
+    required int pid,
+    required String outputMode, // bin 或 text
+    String reader = '',
+  }) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法执行过滤');
+      return null;
+    }
+
+    final completer = Completer<String?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _filterRunRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          if (data['success'] == true && data['taskId'] != null) {
+            completer.complete(data['taskId'] as String);
+          } else {
+            completer.complete(null);
+          }
+        } else {
+          completer.complete(null);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _filterRunRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    final params = {
+      'input': inputFile,
+      'mode': mode,
+      'bit': is32Bit ? 32 : 64,
+      'target': targetAddress,
+      'output': outputFile,
+      'pid': pid,
+      'outputMode': outputMode,
+    };
+
+    // 添加 reader 参数（如果指定）
+    if (reader.isNotEmpty) {
+      params['reader'] = reader;
+    }
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'filter_run',
+        'params': params,
+      },
+      id: _filterRunRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 60), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
   /// 处理收到的消息
   void _handleMessage(dynamic data) {
     try {
@@ -1052,6 +1240,7 @@ class WsService extends ChangeNotifier {
     _errorMessage = error;
     _status = WsStatus.disconnected;
     notifyListeners();
+    _statusController.add(_status);
 
     onError?.call(error);
     logger.error('WebSocket', '错误: $error');
@@ -1069,6 +1258,7 @@ class WsService extends ChangeNotifier {
 
       _status = WsStatus.disconnected;
       notifyListeners();
+      _statusController.add(_status);
       onDisconnected?.call();
       logger.warning('WebSocket', '服务器断开连接');
 
@@ -1088,6 +1278,7 @@ class WsService extends ChangeNotifier {
 
     _status = WsStatus.reconnecting;
     notifyListeners();
+    _statusController.add(_status);
 
     _reconnectTimer = Timer(reconnectDelay, () {
       _reconnectAttempts++;
@@ -1123,6 +1314,7 @@ class WsService extends ChangeNotifier {
   void dispose() {
     disconnect();
     _messageController.close();
+    _statusController.close();
     super.dispose();
   }
 }
