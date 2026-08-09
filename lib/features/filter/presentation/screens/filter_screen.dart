@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/network/ws_service.dart';
+import 'package:fscan/core/utils/logger.dart';
 import 'package:fscan/shared/widgets/terminal_panel.dart';
 
 /// 过滤模式枚举
@@ -102,26 +103,25 @@ class _FilterScreenState extends State<FilterScreen> {
   bool is32Bit = false;
 
   // 每个模式独立的文件选择
-  Map<FilterMode, FilterFile?> _selectedFileByMode = {
+  final Map<FilterMode, FilterFile?> _selectedFileByMode = {
     FilterMode.format: null,
     FilterMode.text: null,
   };
 
   // 每个模式独立的目标地址列表
-  Map<FilterMode, List<String>> _selectedTargetAddressesByMode = {
+  final Map<FilterMode, List<String>> _selectedTargetAddressesByMode = {
     FilterMode.format: [],
     FilterMode.text: [],
   };
 
   // 每个模式独立的目标地址数据
-  Map<FilterMode, List<FilterTarget>> _availableTargetsByMode = {
+  final Map<FilterMode, List<FilterTarget>> _availableTargetsByMode = {
     FilterMode.format: [],
     FilterMode.text: [],
   };
 
   // 文件相关
   List<FilterFile> availableFiles = [];
-  bool _isLoadingFiles = false;
 
   // 目标地址相关
   bool _isLoadingTargets = false;
@@ -142,7 +142,7 @@ class _FilterScreenState extends State<FilterScreen> {
   final TextEditingController _targetController = TextEditingController();
 
   // 每个模式独立的输出路径
-  Map<FilterMode, String> _outputPathByMode = {
+  final Map<FilterMode, String> _outputPathByMode = {
     FilterMode.format: '',
     FilterMode.text: '',
   };
@@ -152,19 +152,15 @@ class _FilterScreenState extends State<FilterScreen> {
   set _outputPath(String path) => _outputPathByMode[filterMode] = path;
 
   // 每个模式独立的终端状态
-  Map<FilterMode, String?> _taskIdByMode = {
+  final Map<FilterMode, String?> _taskIdByMode = {
     FilterMode.format: null,
     FilterMode.text: null,
   };
-  Map<FilterMode, bool> _showTerminalByMode = {
+  final Map<FilterMode, bool> _showTerminalByMode = {
     FilterMode.format: false,
     FilterMode.text: false,
   };
-  Map<FilterMode, Widget?> _terminalPanels = {};
-
-  // 当前模式的终端状态
-  String? get _currentTaskId => _taskIdByMode[filterMode];
-  bool get _showTerminal => _showTerminalByMode[filterMode] ?? false;
+  final Map<FilterMode, Widget?> _terminalPanels = {};
 
   @override
   void initState() {
@@ -250,8 +246,6 @@ class _FilterScreenState extends State<FilterScreen> {
   Future<void> _loadFiles() async {
     if (!mounted) return;
 
-    setState(() => _isLoadingFiles = true);
-
     try {
       final wsService = context.read<WsService>();
       final dir = _dataDir;
@@ -272,15 +266,10 @@ class _FilterScreenState extends State<FilterScreen> {
       if (files != null && mounted) {
         setState(() {
           availableFiles = files.map((f) => FilterFile.fromJson(f)).toList();
-          _isLoadingFiles = false;
         });
-      } else if (mounted) {
-        setState(() => _isLoadingFiles = false);
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _isLoadingFiles = false);
-      }
+      // 加载失败，保持当前状态
     }
   }
 
@@ -1086,11 +1075,6 @@ class _FilterScreenState extends State<FilterScreen> {
     );
   }
 
-  /// 终端面板卡片
-  Widget _buildTerminalCard() {
-    return _buildTerminalCardForMode(filterMode);
-  }
-
   /// 为指定模式构建终端面板卡片
   Widget _buildTerminalCardForMode(FilterMode mode) {
     // 获取或创建终端面板
@@ -1151,18 +1135,21 @@ class _FilterScreenState extends State<FilterScreen> {
 
   /// 选择文件弹窗
   Future<void> selectFile() async {
-    await _loadFiles();
-
     if (!mounted) return;
 
     String searchText = '';
     FilterFile? tempSelected = selectedFile;
+    Function(VoidCallback)? setDialogState;
+    bool isLoading = true;
 
+    // 先弹窗，显示加载中
     showDialog(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialog) {
+            setDialogState = setDialog;
+
             final filteredFiles = availableFiles.where((file) {
               return file.name.toLowerCase().contains(searchText.toLowerCase());
             }).toList();
@@ -1172,20 +1159,33 @@ class _FilterScreenState extends State<FilterScreen> {
                 children: [
                   const Text('选择文件'),
                   const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.refresh),
-                    onPressed: () async {
-                      await _loadFiles();
-                      setDialog(() {});
-                    },
-                  ),
+                  if (!isLoading)
+                    IconButton(
+                      icon: const Icon(Icons.refresh),
+                      onPressed: () async {
+                        setDialog(() => isLoading = true);
+                        await _loadFiles();
+                        if (mounted) {
+                          setDialog(() => isLoading = false);
+                        }
+                      },
+                    ),
                 ],
               ),
               content: SizedBox(
                 width: double.maxFinite,
                 height: 350,
-                child: _isLoadingFiles
-                    ? const Center(child: CircularProgressIndicator())
+                child: isLoading
+                    ? const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 16),
+                            Text('正在加载文件列表...'),
+                          ],
+                        ),
+                      )
                     : filteredFiles.isEmpty
                         ? Center(
                             child: Column(
@@ -1267,6 +1267,36 @@ class _FilterScreenState extends State<FilterScreen> {
         );
       },
     );
+
+    // 弹窗显示后，加载数据并更新UI
+    try {
+      final wsService = context.read<WsService>();
+
+      List<String> extensions;
+      switch (filterMode) {
+        case FilterMode.format:
+          extensions = ['out', 'bin'];
+          break;
+        case FilterMode.text:
+          extensions = ['txt'];
+          break;
+      }
+
+      final files = await wsService.getFiles(_dataDir, extensions);
+      if (files != null && mounted) {
+        setState(() {
+          availableFiles = files.map((f) => FilterFile.fromJson(f)).toList();
+        });
+      }
+    } catch (e) {
+      logger.error('FilterScreen', '加载文件失败', e);
+    } finally {
+      if (mounted && setDialogState != null) {
+        setDialogState!(() {
+          isLoading = false;
+        });
+      }
+    }
   }
 
   /// 开始过滤

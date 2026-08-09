@@ -71,7 +71,7 @@ class _CompareScreenState extends State<CompareScreen> {
   String outputPath = '/storage/emulated/0/fscan/a1.txt';
 
   // 每个模式独立的文件选择列表
-  Map<CompareMode, List<CompareFile>> _selectedFilesByMode = {
+  final Map<CompareMode, List<CompareFile>> _selectedFilesByMode = {
     CompareMode.basic: [],
     CompareMode.fast: [],
     CompareMode.brutal: [],
@@ -82,26 +82,21 @@ class _CompareScreenState extends State<CompareScreen> {
 
   // 文件相关
   List<CompareFile> availableFiles = [];
-  bool _isLoadingFiles = false;
 
   // 每个模式独立的终端状态
-  Map<CompareMode, String?> _taskIdByMode = {
+  final Map<CompareMode, String?> _taskIdByMode = {
     CompareMode.basic: null,
     CompareMode.fast: null,
     CompareMode.brutal: null,
   };
-  Map<CompareMode, bool> _showTerminalByMode = {
+  final Map<CompareMode, bool> _showTerminalByMode = {
     CompareMode.basic: false,
     CompareMode.fast: false,
     CompareMode.brutal: false,
   };
 
   // 每个模式独立的终端面板
-  Map<CompareMode, Widget?> _terminalPanels = {};
-
-  // 当前模式的终端状态
-  String? get _currentTaskId => _taskIdByMode[compareMode];
-  bool get _showTerminal => _showTerminalByMode[compareMode] ?? false;
+  final Map<CompareMode, Widget?> _terminalPanels = {};
 
   // 当前模式支持的最大文件数
   int get maxFileCount {
@@ -125,8 +120,6 @@ class _CompareScreenState extends State<CompareScreen> {
   /// 加载文件列表
   Future<void> _loadFiles() async {
     if (!mounted) return;
-
-    setState(() => _isLoadingFiles = true);
 
     try {
       final wsService = context.read<WsService>();
@@ -156,15 +149,10 @@ class _CompareScreenState extends State<CompareScreen> {
       if (files != null && mounted) {
         setState(() {
           availableFiles = files.map((f) => CompareFile.fromJson(f)).toList();
-          _isLoadingFiles = false;
         });
-      } else if (mounted) {
-        setState(() => _isLoadingFiles = false);
       }
     } catch (e) {
-      if (mounted) {
-        setState(() => _isLoadingFiles = false);
-      }
+      // 加载失败，保持当前状态
     }
   }
 
@@ -313,8 +301,6 @@ class _CompareScreenState extends State<CompareScreen> {
 
   /// 对比配置卡片
   Widget _buildConfigCard() {
-    final isBasic = compareMode == CompareMode.basic;
-    final isFast = compareMode == CompareMode.fast;
     final isBrutal = compareMode == CompareMode.brutal;
 
     return Card(
@@ -555,11 +541,6 @@ class _CompareScreenState extends State<CompareScreen> {
         ),
       ),
     );
-  }
-
-  /// 终端面板卡片
-  Widget _buildTerminalCard() {
-    return _buildTerminalCardForMode(compareMode);
   }
 
   /// 为指定模式构建终端面板卡片
@@ -1021,9 +1002,8 @@ class _CompareScreenState extends State<CompareScreen> {
   Future<void> selectFiles() async {
     List<CompareFile> tempSelected = List.from(selectedFiles);
     String searchText = '';
-
-    // 先加载文件
-    await _loadFiles();
+    Function(VoidCallback)? setDialogState;
+    bool isLoading = true;
 
     if (!mounted) return;
 
@@ -1041,11 +1021,14 @@ class _CompareScreenState extends State<CompareScreen> {
         break;
     }
 
+    // 先弹窗，显示加载中
     showDialog(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setDialog) {
+            setDialogState = setDialog;
+
             // 搜索筛选
             final filteredFiles = availableFiles.where((file) {
               return file.name.toLowerCase().contains(searchText.toLowerCase());
@@ -1069,13 +1052,17 @@ class _CompareScreenState extends State<CompareScreen> {
                       ],
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.refresh),
-                    onPressed: () async {
-                      await _loadFiles();
-                      setDialog(() {});
-                    },
-                  ),
+                  if (!isLoading)
+                    IconButton(
+                      icon: const Icon(Icons.refresh),
+                      onPressed: () async {
+                        setDialog(() => isLoading = true);
+                        await _loadFiles();
+                        if (mounted) {
+                          setDialog(() => isLoading = false);
+                        }
+                      },
+                    ),
                   Text(
                     '${tempSelected.length}/$maxFileCount',
                     style: TextStyle(
@@ -1090,8 +1077,17 @@ class _CompareScreenState extends State<CompareScreen> {
               content: SizedBox(
                 width: double.maxFinite,
                 height: 400,
-                child: _isLoadingFiles
-                    ? const Center(child: CircularProgressIndicator())
+                child: isLoading
+                    ? const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 16),
+                            Text('正在加载文件列表...'),
+                          ],
+                        ),
+                      )
                     : filteredFiles.isEmpty
                         ? Center(
                             child: Column(
@@ -1181,6 +1177,43 @@ class _CompareScreenState extends State<CompareScreen> {
         );
       },
     );
+
+    // 弹窗显示后，加载数据并更新UI
+    try {
+      final wsService = context.read<WsService>();
+      final appConfig = context.read<AppConfig>();
+
+      String dir = appConfig.dataPath;
+      if (appConfig.selectedPackageName != null) {
+        dir = '$dir/${appConfig.selectedPackageName}';
+      }
+
+      List<String> extensions;
+      switch (compareMode) {
+        case CompareMode.basic:
+        case CompareMode.fast:
+          extensions = ['out'];
+          break;
+        case CompareMode.brutal:
+          extensions = ['norm'];
+          break;
+      }
+
+      final files = await wsService.getFiles(dir, extensions);
+      if (files != null && mounted) {
+        setState(() {
+          availableFiles = files.map((f) => CompareFile.fromJson(f)).toList();
+        });
+      }
+    } catch (e) {
+      logger.error('CompareScreen', '加载文件失败', e);
+    } finally {
+      if (mounted && setDialogState != null) {
+        setDialogState!(() {
+          isLoading = false;
+        });
+      }
+    }
   }
 
   /// 开始对比

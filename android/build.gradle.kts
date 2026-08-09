@@ -11,14 +11,10 @@ subprojects {
         pluginManager.apply("org.jetbrains.kotlin.android")
     }
 
-    // 强制所有子项目使用 compileSdk 36
-    pluginManager.withPlugin("com.android.library") {
-        afterEvaluate {
-            if (extensions.findByType(com.android.build.gradle.LibraryExtension::class.java) != null) {
-                extensions.configure<com.android.build.gradle.LibraryExtension> {
-                    compileSdk = 36
-                }
-            }
+    // 统一所有子项目的 Java/Kotlin JVM target 为 17
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
         }
     }
 }
@@ -32,9 +28,6 @@ rootProject.layout.buildDirectory.value(newBuildDir)
 subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
-}
-subprojects {
-    project.evaluationDependsOn(":app")
 }
 
 tasks.register<Delete>("clean") {

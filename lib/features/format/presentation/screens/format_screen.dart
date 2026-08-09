@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/network/ws_service.dart';
+import 'package:fscan/shared/widgets/terminal_panel.dart';
 
 /// 格式文件页面 - MD3 风格
 class FormatScreen extends StatefulWidget {
@@ -22,6 +23,16 @@ class _FormatScreenState extends State<FormatScreen> {
   // 架构
   bool is32Bit = false;
 
+  // 文件夹模式
+  bool folderMode = false;
+
+  // 输出路径
+  String outputPath = '';
+
+  // 层级限制
+  int? levelMin;
+  int? levelMax;
+
   // 选中的文件（源文件 .out/.bin）
   FormatFile? selectedFile;
 
@@ -30,10 +41,11 @@ class _FormatScreenState extends State<FormatScreen> {
 
   // 预览结果（读取转换后的 txt 前200行）
   List<String> previewResults = [];
-  bool _isPreviewLoading = false;
+  bool _isPreviewLoading = false; // ignore: prefer_final_fields
 
-  // 转换状态
-  bool _isConverting = false;
+  // 终端状态
+  String? _currentTaskId;
+  bool _showTerminal = false;
 
   // 文件列表
   List<FormatFile> availableFiles = [];
@@ -76,37 +88,6 @@ class _FormatScreenState extends State<FormatScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoadingFiles = false);
-      }
-    }
-  }
-
-  /// 预览转换后的 txt 文件（前200行）
-  Future<void> _previewConvertedFile() async {
-    if (convertedFilePath == null) return;
-
-    setState(() => _isPreviewLoading = true);
-
-    try {
-      final wsService = context.read<WsService>();
-      final results = await wsService.previewConvertedFile(convertedFilePath!);
-
-      if (results != null && mounted) {
-        setState(() {
-          previewResults = results;
-          _isPreviewLoading = false;
-        });
-      } else if (mounted) {
-        setState(() {
-          previewResults = [];
-          _isPreviewLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          previewResults = [];
-          _isPreviewLoading = false;
-        });
       }
     }
   }
@@ -196,6 +177,88 @@ class _FormatScreenState extends State<FormatScreen> {
     return value.toString();
   }
 
+  /// 根据选中文件和文件夹模式计算输出路径
+  void _updateOutputPath() {
+    if (selectedFile == null) return;
+
+    final filePath = selectedFile!.path;
+    final dir = filePath.substring(0, filePath.lastIndexOf('/'));
+    final fileName = filePath.substring(filePath.lastIndexOf('/') + 1);
+
+    String outputName;
+    if (folderMode) {
+      // 文件夹模式：去掉后缀，作为文件夹名
+      final lastDot = fileName.lastIndexOf('.');
+      outputName = lastDot > 0 ? fileName.substring(0, lastDot) : fileName;
+    } else {
+      // 非文件夹模式：替换后缀为 .txt
+      if (fileName.endsWith('.out')) {
+        outputName = fileName.replaceAll('.out', '.txt');
+      } else if (fileName.endsWith('.bin')) {
+        outputName = fileName.replaceAll('.bin', '.txt');
+      } else {
+        outputName = '$fileName.txt';
+      }
+    }
+
+    setState(() => outputPath = '$dir/$outputName');
+  }
+
+  /// 编辑层级限制
+  void _editLevelLimit() {
+    final minController = TextEditingController(text: levelMin?.toString() ?? '');
+    final maxController = TextEditingController(text: levelMax?.toString() ?? '');
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('层级限制'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: minController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: '最小层级',
+                  border: OutlineInputBorder(),
+                  hintText: '不限制',
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: maxController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: '最大层级',
+                  border: OutlineInputBorder(),
+                  hintText: '不限制',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                setState(() {
+                  levelMin = int.tryParse(minController.text);
+                  levelMax = int.tryParse(maxController.text);
+                });
+                Navigator.pop(context);
+              },
+              child: const Text('确定'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -227,6 +290,13 @@ class _FormatScreenState extends State<FormatScreen> {
 
             // 操作按钮
             _buildActionButtons(),
+
+            // 终端面板（嵌入式）
+            if (_showTerminal && _currentTaskId != null) ...[
+              const SizedBox(height: 16),
+              _buildTerminalCard(),
+            ],
+
             const SizedBox(height: 32),
           ],
         ),
@@ -348,6 +418,63 @@ class _FormatScreenState extends State<FormatScreen> {
                   ),
                 ],
               ),
+            ),
+            const Divider(),
+
+            // 文件夹模式
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('文件夹输出'),
+              subtitle: const Text('输出为文件夹格式'),
+              value: folderMode,
+              onChanged: (v) {
+                setState(() => folderMode = v);
+                // 切换时自动更新输出路径
+                _updateOutputPath();
+              },
+            ),
+            const Divider(),
+
+            // 输出路径
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('输出路径'),
+              subtitle: Text(
+                outputPath.isEmpty ? '选择文件后自动生成' : outputPath.split('/').last,
+                style: TextStyle(
+                  color: outputPath.isEmpty
+                      ? Theme.of(context).colorScheme.onSurfaceVariant
+                      : Theme.of(context).colorScheme.primary,
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                ),
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextButton.icon(
+                    onPressed: _updateOutputPath,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('重新生成'),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                ],
+              ),
+            ),
+            const Divider(),
+
+            // 层级限制
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('层级限制'),
+              subtitle: Text(
+                levelMin != null || levelMax != null
+                    ? '最小: ${levelMin ?? "无"}  最大: ${levelMax ?? "无"}'
+                    : '不限制',
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _editLevelLimit,
             ),
           ],
         ),
@@ -529,18 +656,57 @@ class _FormatScreenState extends State<FormatScreen> {
     return SizedBox(
       width: double.infinity,
       child: FilledButton.icon(
-        onPressed: selectedFile == null || _isConverting ? null : _startConvert,
-        icon: _isConverting
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-              )
-            : const Icon(Icons.transform),
-        label: Text(_isConverting ? '转换中...' : '开始转换'),
+        onPressed: selectedFile == null ? null : _startConvert,
+        icon: const Icon(Icons.transform),
+        label: const Text('开始转换'),
         style: FilledButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 16),
         ),
+      ),
+    );
+  }
+
+  /// 终端面板卡片
+  Widget _buildTerminalCard() {
+    return Card(
+      child: Column(
+        children: [
+          // 标题栏
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.terminal, size: 20, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                Text('终端输出', style: Theme.of(context).textTheme.titleSmall),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 20),
+                  onPressed: () {
+                    setState(() {
+                      _showTerminal = false;
+                      _currentTaskId = null;
+                    });
+                  },
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+          ),
+          // 终端内容
+          SizedBox(
+            height: 250,
+            child: TerminalPanel(
+              key: ValueKey(_currentTaskId),
+              taskId: _currentTaskId,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -609,7 +775,13 @@ class _FormatScreenState extends State<FormatScreen> {
                                     : null,
                                 onTap: () {
                                   Navigator.pop(context);
-                                  setState(() => selectedFile = file);
+                                  setState(() {
+                                    selectedFile = file;
+                                    convertedFilePath = null;
+                                    previewResults = [];
+                                  });
+                                  // 根据文件名计算输出路径
+                                  _updateOutputPath();
                                 },
                               );
                             },
@@ -630,95 +802,36 @@ class _FormatScreenState extends State<FormatScreen> {
 
   /// 开始转换
   Future<void> _startConvert() async {
-    // 显示确认对话框
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('确认转换'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('文件: ${selectedFile!.name}'),
-              Text('数量限制: $formatCountText'),
-              Text('架构: ${is32Bit ? "32位" : "64位"}'),
-              const SizedBox(height: 16),
-              const Text(
-                '注意：转换过程可能需要较长时间，请勿关闭应用。',
-                style: TextStyle(color: Colors.orange),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('确定转换'),
-            ),
-          ],
-        );
-      },
+    if (!mounted) return;
+
+    final wsService = context.read<WsService>();
+
+    // 启动格式转换
+    final taskId = await wsService.convertFormatFile(
+      filePath: selectedFile!.path,
+      limit: formatCount,
+      is32Bit: is32Bit,
+      folder: folderMode,
+      levelMin: levelMin,
+      levelMax: levelMax,
+      outputPath: outputPath.isNotEmpty ? outputPath : null,
     );
 
-    if (confirmed != true || !mounted) return;
-
-    // 开始转换
-    setState(() {
-      _isConverting = true;
-      previewResults = [];
-    });
-
-    try {
-      final wsService = context.read<WsService>();
-      final result = await wsService.convertFormatFile(
-        selectedFile!.path,
-        formatCount,
-        is32Bit,
+    if (taskId != null && mounted) {
+      setState(() {
+        _currentTaskId = taskId;
+        _showTerminal = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('格式转换已启动'),
+          duration: Duration(seconds: 1),
+        ),
       );
-
-      if (result != null && mounted) {
-        // 转换成功，保存生成的 txt 文件路径
-        setState(() {
-          convertedFilePath = result;
-          _isConverting = false;
-        });
-
-        // 自动预览转换后的文件
-        if (enablePreview) {
-          await _previewConvertedFile();
-        }
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('转换完成: ${result.split('/').last}'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } else if (mounted) {
-        setState(() => _isConverting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('转换失败'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isConverting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('转换失败: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+    } else if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('启动格式转换失败')),
+      );
     }
   }
 }

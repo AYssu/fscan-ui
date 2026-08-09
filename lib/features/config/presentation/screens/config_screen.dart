@@ -935,7 +935,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   }
 
   Future<void> _pickBackgroundImage(BuildContext context, BackgroundProvider bgProvider) async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.image);
+    final result = await FilePicker.pickFiles(type: FileType.image);
     if (result != null && result.files.single.path != null) {
       await bgProvider.setImage(result.files.single.path);
     }

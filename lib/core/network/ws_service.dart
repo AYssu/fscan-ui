@@ -729,7 +729,15 @@ class WsService extends ChangeNotifier {
   }
 
   /// 转换格式文件（.out/.bin -> .txt）
-  Future<String?> convertFormatFile(String filePath, int limit, bool is32Bit) async {
+  Future<String?> convertFormatFile({
+    required String filePath,
+    required int limit,
+    required bool is32Bit,
+    String? outputPath,
+    bool folder = false,
+    int? levelMin,
+    int? levelMax,
+  }) async {
     if (!isConnected) {
       logger.warning('WebSocket', '未连接，无法转换格式文件');
       return null;
@@ -743,8 +751,8 @@ class WsService extends ChangeNotifier {
       if (message.id == _convertFormatRequestId) {
         if (message.type == WsMessageType.response && message.data != null) {
           final data = message.data as Map<String, dynamic>;
-          if (data['success'] == true && data['outputPath'] != null) {
-            completer.complete(data['outputPath'] as String);
+          if (data['success'] == true && data['taskId'] != null) {
+            completer.complete(data['taskId'] as String);
           } else {
             completer.complete(null);
           }
@@ -757,15 +765,28 @@ class WsService extends ChangeNotifier {
 
     _convertFormatRequestId = DateTime.now().millisecondsSinceEpoch.toString();
 
+    final Map<String, dynamic> params = {
+      'filePath': filePath,
+      'limit': limit,
+      'is32Bit': is32Bit,
+      'folder': folder,
+    };
+
+    if (outputPath != null) {
+      params['outputPath'] = outputPath;
+    }
+    if (levelMin != null) {
+      params['levelMin'] = levelMin;
+    }
+    if (levelMax != null) {
+      params['levelMax'] = levelMax;
+    }
+
     send(WsMessage(
       type: WsMessageType.command,
       data: {
         'command': 'convert_format',
-        'params': {
-          'filePath': filePath,
-          'limit': limit,
-          'is32Bit': is32Bit,
-        },
+        'params': params,
       },
       id: _convertFormatRequestId,
     ));

@@ -290,61 +290,6 @@ pub fn filter_list_targets(
     Ok(result)
 }
 
-/// 执行过滤（对应 filter 命令）
-pub fn filter_run(
-    input_file: &str,
-    mode: &str,
-    bit: i32,
-    target: u64,
-    output_file: &str,
-    pid: i32,
-    output_mode: &str,
-    reader: &str,
-) -> Result<serde_json::Value, String> {
-    let binary = get_scan_binary();
-    info!("  Executing: {} filter -i {} -m {} -b {} --pid {} --target 0x{:X} -o {} --output-mode {} --reader {}", binary, input_file, mode, bit, pid, target, output_file, output_mode, reader);
-
-    let mut cmd = Command::new(&binary);
-    cmd.arg("filter")
-        .arg("-i")
-        .arg(input_file)
-        .arg("-m")
-        .arg(mode)
-        .arg("-b")
-        .arg(bit.to_string())
-        .arg("--pid")
-        .arg(pid.to_string())
-        .arg("--target")
-        .arg(format!("0x{:X}", target))
-        .arg("-o")
-        .arg(output_file)
-        .arg("--output-mode")
-        .arg(output_mode);
-
-    // 添加 reader 参数（如果指定）
-    if !reader.is_empty() {
-        cmd.arg("--reader").arg(reader);
-    }
-
-    let output = cmd.output()
-        .map_err(|e| format!("Failed to execute {}: {}", binary, e))?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if !output.status.success() {
-        return Err(format!("Command failed: {}", stderr));
-    }
-
-    info!("  Filter run output: {} bytes", stdout.len());
-
-    // 解析 JSON 响应
-    let result: serde_json::Value = serde_json::from_str(&stdout)
-        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
-
-    Ok(result)
-}
-
 /// 检查文件是否存在
 pub fn check_file_exists(file_path: &str) -> Result<bool, String> {
     let exists = std::path::Path::new(file_path).exists();

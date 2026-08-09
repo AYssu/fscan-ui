@@ -101,7 +101,6 @@ enum CommandHandler {
     Compare,
     CompareNorm,
     FilterListTargets,
-    FilterRun,
     CheckFileExists,
 }
 
@@ -378,52 +377,6 @@ impl CommandHandler {
                     }
                 }
             }
-            Self::FilterRun => {
-                let input = params
-                    .and_then(|p| p.get("input"))
-                    .and_then(|i| i.as_str())
-                    .unwrap_or("");
-                let mode = params
-                    .and_then(|p| p.get("mode"))
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("bin");
-                let bit = params
-                    .and_then(|p| p.get("bit"))
-                    .and_then(|b| b.as_i64())
-                    .unwrap_or(64) as i32;
-                let target = params
-                    .and_then(|p| p.get("target"))
-                    .and_then(|t| t.as_u64())
-                    .unwrap_or(0);
-                let output = params
-                    .and_then(|p| p.get("output"))
-                    .and_then(|o| o.as_str())
-                    .unwrap_or("");
-                let pid = params
-                    .and_then(|p| p.get("pid"))
-                    .and_then(|p| p.as_i64())
-                    .unwrap_or(0) as i32;
-                let output_mode = params
-                    .and_then(|p| p.get("outputMode"))
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("bin");
-                let reader = params
-                    .and_then(|p| p.get("reader"))
-                    .and_then(|r| r.as_str())
-                    .unwrap_or("");
-
-                info!("  ├─ Processing: filter_run input={} mode={} bit={} target=0x{:X} pid={} outputMode={} reader={}", input, mode, bit, target, pid, output_mode, reader);
-
-                match handlers::filter_run(input, mode, bit, target, output, pid, output_mode, reader) {
-                    Ok(result) => {
-                        WsMessage::response(id, result)
-                    }
-                    Err(e) => {
-                        info!("  ├─ Filter run failed: {}", e);
-                        WsMessage::error(id, &format!("Filter run failed: {}", e))
-                    }
-                }
-            }
             Self::CheckFileExists => {
                 let path = params
                     .and_then(|p| p.get("path"))
@@ -613,6 +566,56 @@ impl Service {
 
                     tokio::spawn(async move {
                         Self::run_filter_task(task_id_clone, params, scan_tx).await;
+                    });
+
+                    return Some(response);
+                }
+
+                // 特殊处理convert_format命令
+                if command == "convert_format" {
+                    let task_id = uuid::Uuid::new_v4().to_string();
+                    info!("  ├─ Starting convert_format task: {}", task_id);
+
+                    // 计算输出路径
+                    let params_val = params.cloned().unwrap_or(serde_json::json!({}));
+                    let output_path = if let Some(o) = params_val.get("outputPath").and_then(|v| v.as_str()) {
+                        o.to_string()
+                    } else if let Some(input) = params_val.get("filePath").and_then(|v| v.as_str()) {
+                        let folder = params_val.get("folder").and_then(|v| v.as_bool()).unwrap_or(false);
+                        if folder {
+                            // 文件夹模式：保持原文件名，不加后缀
+                            input.to_string()
+                        } else {
+                            // 非文件夹模式：替换后缀为 .txt
+                            if input.ends_with(".out") {
+                                input.replace(".out", ".txt")
+                            } else if input.ends_with(".bin") {
+                                input.replace(".bin", ".txt")
+                            } else {
+                                format!("{}.txt", input)
+                            }
+                        }
+                    } else {
+                        String::new()
+                    };
+
+                    // 立即返回任务ID和输出路径
+                    let response = WsMessage::response(
+                        msg.id.clone(),
+                        serde_json::json!({
+                            "success": true,
+                            "taskId": task_id,
+                            "outputPath": output_path,
+                            "message": "格式转换任务已启动"
+                        }),
+                    );
+
+                    // 启动后台格式转换任务
+                    let scan_tx = self.scan_output_tx.clone();
+                    let task_id_clone = task_id.clone();
+
+                    tokio::spawn(async move {
+                        Self::run_convert_format_task(task_id_clone, params_val, scan_tx).await;
                     });
 
                     return Some(response);
@@ -869,7 +872,7 @@ impl Service {
             cmd.arg("--level-max").arg(level_max.to_string());
         }
 
-        info!("  ├─ Executing compare command");
+        info!("  ├─ Executing: {:?}", cmd);
 
         // 发送开始消息
         let start_msg = WsMessage {
@@ -1009,7 +1012,7 @@ impl Service {
             cmd.arg("--max-level").arg(max_level.to_string());
         }
 
-        info!("  ├─ Executing compare-norm command");
+        info!("  ├─ Executing: {:?}", cmd);
 
         // 发送开始消息
         let start_msg = WsMessage {
@@ -1108,6 +1111,164 @@ impl Service {
                         "taskId": task_id,
                         "type": "error",
                         "message": format!("启动暴力对比失败: {}", e)
+                    })),
+                };
+                let _ = scan_tx.send(error_msg.encode());
+            }
+        }
+    }
+
+    /// 运行格式转换任务
+    async fn run_convert_format_task(task_id: String, params: serde_json::Value, scan_tx: broadcast::Sender<String>) {
+        use tokio::process::Command;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
+        let binary = handlers::get_scan_binary();
+
+        // 构建命令参数
+        let mut cmd = Command::new(&binary);
+        cmd.arg("format");
+
+        // 输入文件
+        if let Some(input) = params.get("filePath").and_then(|i| i.as_str()) {
+            cmd.arg("-i").arg(input);
+        }
+
+        // 输出文件
+        if let Some(output) = params.get("outputPath").and_then(|o| o.as_str()) {
+            cmd.arg("-o").arg(output);
+        } else {
+            // 自动生成输出路径：将 .out/.bin 替换为 .txt
+            if let Some(input) = params.get("filePath").and_then(|i| i.as_str()) {
+                let output = if input.ends_with(".out") {
+                    input.replace(".out", ".txt")
+                } else if input.ends_with(".bin") {
+                    input.replace(".bin", ".txt")
+                } else {
+                    format!("{}.txt", input)
+                };
+                cmd.arg("-o").arg(&output);
+            }
+        }
+
+        // 进程位数
+        let bit = if params.get("is32Bit").and_then(|b| b.as_bool()).unwrap_or(false) { 32 } else { 64 };
+        cmd.arg("-b").arg(bit.to_string());
+
+        // 文件夹模式
+        if params.get("folder").and_then(|f| f.as_bool()).unwrap_or(false) {
+            cmd.arg("--folder");
+        }
+
+        // 层级限制
+        if let Some(level_min) = params.get("levelMin").and_then(|l| l.as_i64()) {
+            cmd.arg("--level-min").arg(level_min.to_string());
+        }
+
+        if let Some(level_max) = params.get("levelMax").and_then(|l| l.as_i64()) {
+            cmd.arg("--level-max").arg(level_max.to_string());
+        }
+
+        // 限制数量
+        if let Some(limit) = params.get("limit").and_then(|l| l.as_i64()) {
+            cmd.arg("--limit").arg(limit.to_string());
+        }
+
+        info!("  ├─ Executing: {:?}", cmd);
+
+        // 发送开始消息
+        let start_msg = WsMessage {
+            msg_type: MessageType::Stream,
+            id: Some(task_id.clone()),
+            data: Some(serde_json::json!({
+                "taskId": task_id,
+                "type": "start",
+                "message": "格式转换开始"
+            })),
+        };
+        let _ = scan_tx.send(start_msg.encode());
+
+        // 执行命令并获取输出
+        match cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn() {
+            Ok(mut child) => {
+                let stdout = child.stdout.take().unwrap();
+                let stderr = child.stderr.take().unwrap();
+
+                // 读取stdout
+                let stdout_task_id = task_id.clone();
+                let stdout_tx = scan_tx.clone();
+                let stdout_handle = tokio::spawn(async move {
+                    let reader = BufReader::new(stdout);
+                    let mut lines = reader.lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        info!("  ├─ [stdout] {}", line);
+                        let stream_msg = WsMessage {
+                            msg_type: MessageType::Stream,
+                            id: Some(stdout_task_id.clone()),
+                            data: Some(serde_json::json!({
+                                "taskId": stdout_task_id,
+                                "type": "stdout",
+                                "line": line
+                            })),
+                        };
+                        let _ = stdout_tx.send(stream_msg.encode());
+                    }
+                    info!("  ├─ [stdout] 读取完成");
+                });
+
+                // 读取stderr
+                let stderr_task_id = task_id.clone();
+                let stderr_tx = scan_tx.clone();
+                let stderr_handle = tokio::spawn(async move {
+                    let reader = BufReader::new(stderr);
+                    let mut lines = reader.lines();
+                    while let Ok(Some(line)) = lines.next_line().await {
+                        info!("  ├─ [stderr] {}", line);
+                        let stream_msg = WsMessage {
+                            msg_type: MessageType::Stream,
+                            id: Some(stderr_task_id.clone()),
+                            data: Some(serde_json::json!({
+                                "taskId": stderr_task_id,
+                                "type": "stderr",
+                                "line": line
+                            })),
+                        };
+                        let _ = stderr_tx.send(stream_msg.encode());
+                    }
+                    info!("  ├─ [stderr] 读取完成");
+                });
+
+                // 等待任务完成
+                info!("  ├─ 等待子进程完成...");
+                let _ = tokio::join!(stdout_handle, stderr_handle);
+                let output = child.wait_with_output().await;
+                let exit_code = output.as_ref().ok().and_then(|o| o.status.code());
+
+                // 发送完成消息
+                let complete_msg = WsMessage {
+                    msg_type: MessageType::Stream,
+                    id: Some(task_id.clone()),
+                    data: Some(serde_json::json!({
+                        "taskId": task_id,
+                        "type": "complete",
+                        "success": exit_code == Some(0),
+                        "exitCode": exit_code
+                    })),
+                };
+                info!("  ├─ 发送完成消息");
+                let _ = scan_tx.send(complete_msg.encode());
+
+                info!("  ├─ Convert-format task completed: {} exit_code={:?}", task_id, exit_code);
+            }
+            Err(e) => {
+                error!("  ├─ Failed to start convert-format: {}", e);
+                let error_msg = WsMessage {
+                    msg_type: MessageType::Stream,
+                    id: Some(task_id.clone()),
+                    data: Some(serde_json::json!({
+                        "taskId": task_id,
+                        "type": "error",
+                        "message": format!("启动格式转换失败: {}", e)
                     })),
                 };
                 let _ = scan_tx.send(error_msg.encode());
@@ -1339,7 +1500,8 @@ async fn handle_connection(
                 }
                 msg = scan_output_rx.recv() => {
                     if let Ok(msg) = msg {
-                        info!("[{}] → Sending scan output: {}", client_addr, &msg[..msg.len().min(100)]);
+                        let preview: String = msg.chars().take(100).collect();
+                        info!("[{}] → Sending scan output: {}...", client_addr, preview);
                         if ws_sender.send(msg.into()).await.is_err() {
                             break;
                         }

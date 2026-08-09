@@ -664,9 +664,10 @@ class _DriverScreenState extends State<DriverScreen> {
                     setState(() => memoryRanges = tempSelected);
                     // 保存到AppConfig（持久化）
                     final appConfig = context.read<AppConfig>();
+                    final nav = Navigator.of(context);
                     await appConfig.setMemoryRanges(memoryRanges);
                     if (mounted) {
-                      Navigator.pop(context);
+                      nav.pop();
                     }
                   },
                   child: const Text('确定'),
