@@ -5,7 +5,7 @@ import 'package:fscan/core/theme/theme_provider.dart';
 import 'package:fscan/core/theme/background_provider.dart';
 import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/network/ws_service.dart';
-import 'package:fscan/core/services/user_service.dart';
+import 'package:fscan/core/services/kami_service.dart';
 import 'package:fscan/main.dart';
 
 void main() {
@@ -15,7 +15,7 @@ void main() {
     final backgroundProvider = BackgroundProvider();
     final appConfig = AppConfig();
     final wsService = WsService();
-    final userService = UserService();
+    final kamiService = KamiService();
 
     // Build our app and trigger a frame.
     await tester.pumpWidget(MyApp(
@@ -23,7 +23,7 @@ void main() {
       backgroundProvider: backgroundProvider,
       appConfig: appConfig,
       wsService: wsService,
-      userService: userService,
+      kamiService: kamiService,
     ));
 
     // Verify that the app renders
