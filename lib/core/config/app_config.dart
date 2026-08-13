@@ -11,7 +11,7 @@ class AppConfig extends ChangeNotifier {
   int get rwMethod => _rwMethod;
 
   // 动态库地址
-  String _libPath = '/data/local/tmp/libmemory.so';
+  String _libPath = '/data/local/tmp/libsyscall.so';
   String get libPath => _libPath;
 
   // 配置文件目录
@@ -80,7 +80,7 @@ class AppConfig extends ChangeNotifier {
 
     // 加载读写方式和动态库路径
     _rwMethod = prefs.getInt('app_rwMethod') ?? 0;
-    _libPath = prefs.getString('app_libPath') ?? '/data/local/tmp/libmemory.so';
+    _libPath = prefs.getString('app_libPath') ?? '/data/local/tmp/libsyscall.so';
 
     // 加载内存范围配置
     final savedRanges = prefs.getString('app_memoryRanges');

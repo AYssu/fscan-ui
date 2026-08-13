@@ -268,18 +268,23 @@ class _CompareScreenState extends State<CompareScreen> {
             SizedBox(
               width: double.infinity,
               child: SegmentedButton<CompareMode>(
+                showSelectedIcon: false,
+                style: const ButtonStyle(
+                  padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 4)),
+                  visualDensity: VisualDensity.compact,
+                ),
                 segments: const [
                   ButtonSegment(
                     value: CompareMode.basic,
-                    label: Text('基础对比'),
+                    label: Text('基础对比', style: TextStyle(fontSize: 13)),
                   ),
                   ButtonSegment(
                     value: CompareMode.fast,
-                    label: Text('极速对比'),
+                    label: Text('极速对比', style: TextStyle(fontSize: 13)),
                   ),
                   ButtonSegment(
                     value: CompareMode.brutal,
-                    label: Text('暴力对比'),
+                    label: Text('暴力对比', style: TextStyle(fontSize: 13)),
                   ),
                 ],
                 selected: {compareMode},

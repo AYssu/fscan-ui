@@ -963,7 +963,7 @@ class _ScanScreenState extends State<ScanScreen> {
                 if (tempList.isNotEmpty)
                   TextButton(
                     onPressed: () => setDialog(() => tempList.clear()),
-                    child: const Text('清空全部'),
+                    child: const Text('清空'),
                   ),
                 TextButton(
                   onPressed: () {
@@ -978,7 +978,7 @@ class _ScanScreenState extends State<ScanScreen> {
                     setState(() => searchAddresses = tempList);
                     Navigator.pop(context);
                   },
-                  child: Text('确定 (${tempList.length})'),
+                  child: const Text('确定'),
                 ),
               ],
             );
@@ -1534,6 +1534,20 @@ class _ScanScreenState extends State<ScanScreen> {
     if (memoryRanges['Bad'] == true) ranges.add('Bad');
     if (memoryRanges['PPSSPP'] == true) ranges.add('PPSSPP');
 
+    // 确定 reader 类型（与过滤/驱动保持一致）
+    String readerType = '';
+    switch (appConfig.rwMethod) {
+      case 0:
+        readerType = 'syscall';
+        break;
+      case 1:
+        readerType = 'pread';
+        break;
+      case 2:
+        readerType = appConfig.libPath;
+        break;
+    }
+
     // 启动扫描
     final taskId = await wsService.startScan(
       packageName: appConfig.selectedPackageName,
@@ -1548,6 +1562,7 @@ class _ScanScreenState extends State<ScanScreen> {
       brutalMode: isBrutalMode,
       pageFault: handlePageFault,
       handleB4000000: handleB4000000,
+      reader: readerType.isEmpty ? null : readerType,
       kamiKey: kamiService.kamiKey,
     );
 

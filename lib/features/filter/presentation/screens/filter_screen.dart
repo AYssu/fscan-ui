@@ -307,12 +307,27 @@ class _FilterScreenState extends State<FilterScreen> {
           break;
       }
 
+      // 确定 reader 类型（与过滤执行保持一致）
+      String readerType = '';
+      switch (appConfig.rwMethod) {
+        case 0:
+          readerType = 'syscall';
+          break;
+        case 1:
+          readerType = 'pread';
+          break;
+        case 2:
+          readerType = appConfig.libPath;
+          break;
+      }
+
       final kamiService = context.read<KamiService>();
       final result = await wsService.filterListTargets(
         inputFile: selectedFile!.path,
         mode: mode,
         is32Bit: is32Bit,
         pid: pid,
+        reader: readerType.isEmpty ? null : readerType,
         kamiKey: kamiService.kamiKey,
       );
 

@@ -1248,6 +1248,7 @@ class WsService extends ChangeNotifier {
     required bool is32Bit,
     required int pid,
     int valueType = 0,
+    String? reader,
     String? kamiKey,
   }) async {
     if (!isConnected) {
@@ -1280,6 +1281,11 @@ class WsService extends ChangeNotifier {
       'valueType': valueType,
       'pid': pid,
     };
+
+    // 添加 reader 参数（如果指定）
+    if (reader != null && reader.isNotEmpty) {
+      params['reader'] = reader;
+    }
 
     // 添加卡密参数
     if (kamiKey != null && kamiKey.isNotEmpty) {

@@ -254,6 +254,7 @@ pub fn filter_list_targets(
     bit: i32,
     value_type: i32,
     pid: i32,
+    reader: Option<&str>,
     kami_key: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let binary = get_scan_binary();
@@ -272,6 +273,13 @@ pub fn filter_list_targets(
         .arg("--list")
         .arg("--value-type")
         .arg(value_type.to_string());
+
+    // 添加 reader 参数
+    if let Some(r) = reader {
+        if !r.is_empty() {
+            cmd.arg("--reader").arg(r);
+        }
+    }
 
     // 添加卡密参数
     if let Some(key) = kami_key {

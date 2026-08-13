@@ -370,13 +370,16 @@ impl CommandHandler {
                     .and_then(|p| p.get("pid"))
                     .and_then(|p| p.as_i64())
                     .unwrap_or(0) as i32;
+                let reader = params
+                    .and_then(|p| p.get("reader"))
+                    .and_then(|r| r.as_str());
                 let kami_key = params
                     .and_then(|p| p.get("kamiKey"))
                     .and_then(|k| k.as_str());
 
                 info!("  ├─ Processing: filter_list_targets input={} mode={} bit={} pid={}", input, mode, bit, pid);
 
-                match handlers::filter_list_targets(input, mode, bit, value_type, pid, kami_key) {
+                match handlers::filter_list_targets(input, mode, bit, value_type, pid, reader, kami_key) {
                     Ok(result) => {
                         WsMessage::response(id, result)
                     }
