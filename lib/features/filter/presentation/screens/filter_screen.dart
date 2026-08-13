@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:fscan/core/config/app_config.dart';
+import 'package:fscan/core/services/kami_service.dart';
 import 'package:fscan/core/network/ws_service.dart';
 import 'package:fscan/core/utils/logger.dart';
 import 'package:fscan/shared/widgets/terminal_panel.dart';
@@ -306,11 +307,13 @@ class _FilterScreenState extends State<FilterScreen> {
           break;
       }
 
+      final kamiService = context.read<KamiService>();
       final result = await wsService.filterListTargets(
         inputFile: selectedFile!.path,
         mode: mode,
         is32Bit: is32Bit,
         pid: pid,
+        kamiKey: kamiService.kamiKey,
       );
 
       if (result != null && mounted) {
@@ -1317,6 +1320,7 @@ class _FilterScreenState extends State<FilterScreen> {
 
     final wsService = context.read<WsService>();
     final appConfig = context.read<AppConfig>();
+    final kamiService = context.read<KamiService>();
 
     // 获取当前进程 PID
     final pid = appConfig.selectedPid ?? 0;
@@ -1387,6 +1391,7 @@ class _FilterScreenState extends State<FilterScreen> {
             pid: pid,
             outputMode: outputModeStr,
             reader: readerType,
+            kamiKey: kamiService.kamiKey,
           );
 
           if (taskId != null && mounted) {
@@ -1450,6 +1455,7 @@ class _FilterScreenState extends State<FilterScreen> {
             pid: pid,
             outputMode: 'text', // 文本过滤只能输出文本
             reader: readerType,
+            kamiKey: kamiService.kamiKey,
           );
 
           if (taskId != null && mounted) {

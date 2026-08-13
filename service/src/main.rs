@@ -100,8 +100,10 @@ enum CommandHandler {
     ReaderTest,
     Compare,
     CompareNorm,
+    ToOut,
     FilterListTargets,
     CheckFileExists,
+    KamiInfo,
 }
 
 impl CommandHandler {
@@ -343,6 +345,10 @@ impl CommandHandler {
                 // CompareNorm 在 Service::handle_message 中特殊处理
                 WsMessage::error(id, "CompareNorm should be handled by Service")
             }
+            Self::ToOut => {
+                // ToOut 在 Service::handle_message 中特殊处理
+                WsMessage::error(id, "ToOut should be handled by Service")
+            }
             Self::FilterListTargets => {
                 let input = params
                     .and_then(|p| p.get("input"))
@@ -364,10 +370,13 @@ impl CommandHandler {
                     .and_then(|p| p.get("pid"))
                     .and_then(|p| p.as_i64())
                     .unwrap_or(0) as i32;
+                let kami_key = params
+                    .and_then(|p| p.get("kamiKey"))
+                    .and_then(|k| k.as_str());
 
                 info!("  ├─ Processing: filter_list_targets input={} mode={} bit={} pid={}", input, mode, bit, pid);
 
-                match handlers::filter_list_targets(input, mode, bit, value_type, pid) {
+                match handlers::filter_list_targets(input, mode, bit, value_type, pid, kami_key) {
                     Ok(result) => {
                         WsMessage::response(id, result)
                     }
@@ -401,6 +410,54 @@ impl CommandHandler {
                     }
                 }
             }
+            Self::KamiInfo => {
+                let kami_key = params
+                    .and_then(|p| p.get("kamiKey"))
+                    .and_then(|k| k.as_str())
+                    .unwrap_or("");
+
+                info!("  ├─ Processing: kami_info key={}", kami_key);
+
+                if kami_key.is_empty() {
+                    return WsMessage::error(id, "卡密不能为空");
+                }
+
+                let binary = handlers::get_scan_binary();
+
+                match tokio::process::Command::new(&binary)
+                    .arg("kami-info")
+                    .arg("-k")
+                    .arg(kami_key)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .output()
+                    .await
+                {
+                    Ok(output) => {
+                        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                        info!("  ├─ Kami info output: {}", stdout);
+
+                        // 尝试解析JSON输出
+                        match serde_json::from_str::<serde_json::Value>(&stdout) {
+                            Ok(json) => WsMessage::response(id, json),
+                            Err(_) => {
+                                // 如果不是JSON，包装成带输出的响应
+                                WsMessage::response(
+                                    id,
+                                    serde_json::json!({
+                                        "success": true,
+                                        "output": stdout.trim()
+                                    }),
+                                )
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        info!("  ├─ Kami info failed: {}", e);
+                        WsMessage::error(id, &format!("查询卡密信息失败: {}", e))
+                    }
+                }
+            }
         }
     }
 }
@@ -428,9 +485,11 @@ impl Service {
         handlers.insert("start_scan".to_string(), CommandHandler::StartScan);
         handlers.insert("compare".to_string(), CommandHandler::Compare);
         handlers.insert("compare_norm".to_string(), CommandHandler::CompareNorm);
+        handlers.insert("to_out".to_string(), CommandHandler::ToOut);
         handlers.insert("reader_test".to_string(), CommandHandler::ReaderTest);
         handlers.insert("filter_list_targets".to_string(), CommandHandler::FilterListTargets);
         handlers.insert("check_file_exists".to_string(), CommandHandler::CheckFileExists);
+        handlers.insert("kami_info".to_string(), CommandHandler::KamiInfo);
 
         // 创建扫描输出广播通道
         let (scan_output_tx, _) = broadcast::channel(1000);
@@ -542,6 +601,15 @@ impl Service {
                     });
 
                     return Some(response);
+                }
+
+                // 特殊处理to_out命令 - 直接执行并返回结果
+                if command == "to_out" {
+                    let params_val = params.cloned().unwrap_or(serde_json::json!({}));
+                    info!("  ├─ Processing: to_out");
+
+                    let result = Self::execute_to_out(&params_val).await;
+                    return Some(WsMessage::response(msg.id.clone(), result));
                 }
 
                 // 特殊处理filter_run命令
@@ -717,6 +785,13 @@ impl Service {
             cmd.arg("--reader").arg(reader);
         }
 
+        // 卡密参数
+        if let Some(kami_key) = params.get("kamiKey").and_then(|k| k.as_str()) {
+            if !kami_key.is_empty() {
+                cmd.arg("-k").arg(kami_key);
+            }
+        }
+
         info!("  ├─ Executing scan command");
 
         // 发送开始消息 - 包装成WsMessage格式
@@ -872,6 +947,13 @@ impl Service {
             cmd.arg("--level-max").arg(level_max.to_string());
         }
 
+        // 卡密参数
+        if let Some(kami_key) = params.get("kamiKey").and_then(|k| k.as_str()) {
+            if !kami_key.is_empty() {
+                cmd.arg("-k").arg(kami_key);
+            }
+        }
+
         info!("  ├─ Executing: {:?}", cmd);
 
         // 发送开始消息
@@ -1012,6 +1094,13 @@ impl Service {
             cmd.arg("--max-level").arg(max_level.to_string());
         }
 
+        // 卡密参数
+        if let Some(kami_key) = params.get("kamiKey").and_then(|k| k.as_str()) {
+            if !kami_key.is_empty() {
+                cmd.arg("-k").arg(kami_key);
+            }
+        }
+
         info!("  ├─ Executing: {:?}", cmd);
 
         // 发送开始消息
@@ -1118,6 +1207,67 @@ impl Service {
         }
     }
 
+    /// 执行 norm 转 out（同步返回结果）
+    async fn execute_to_out(params: &serde_json::Value) -> serde_json::Value {
+        use tokio::process::Command;
+
+        let binary = handlers::get_scan_binary();
+
+        // 构建命令参数
+        let mut cmd = Command::new(&binary);
+        cmd.arg("to-out");
+
+        // 输入文件
+        if let Some(files) = params.get("inputFiles").and_then(|f| f.as_array()) {
+            for file in files {
+                if let Some(file_str) = file.as_str() {
+                    cmd.arg("-i").arg(file_str);
+                }
+            }
+        }
+
+        // 输出文件
+        if let Some(output) = params.get("outputFile").and_then(|o| o.as_str()) {
+            cmd.arg("-o").arg(output);
+        }
+
+        // 卡密参数
+        if let Some(kami_key) = params.get("kamiKey").and_then(|k| k.as_str()) {
+            if !kami_key.is_empty() {
+                cmd.arg("-k").arg(kami_key);
+            }
+        }
+
+        info!("  ├─ Executing to-out: {:?}", cmd);
+
+        match cmd.output().await {
+            Ok(output) => {
+                let exit_code = output.status.code();
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+                info!("  ├─ to-out completed: exit_code={:?}", exit_code);
+                if !stderr.is_empty() {
+                    info!("  ├─ stderr: {}", stderr);
+                }
+
+                serde_json::json!({
+                    "success": exit_code == Some(0),
+                    "exitCode": exit_code,
+                    "stdout": stdout.trim(),
+                    "stderr": stderr.trim()
+                })
+            }
+            Err(e) => {
+                error!("  ├─ Failed to execute to-out: {}", e);
+                serde_json::json!({
+                    "success": false,
+                    "error": format!("执行失败: {}", e)
+                })
+            }
+        }
+    }
+
     /// 运行格式转换任务
     async fn run_convert_format_task(task_id: String, params: serde_json::Value, scan_tx: broadcast::Sender<String>) {
         use tokio::process::Command;
@@ -1172,6 +1322,13 @@ impl Service {
         // 限制数量
         if let Some(limit) = params.get("limit").and_then(|l| l.as_i64()) {
             cmd.arg("--limit").arg(limit.to_string());
+        }
+
+        // 卡密参数
+        if let Some(kami_key) = params.get("kamiKey").and_then(|k| k.as_str()) {
+            if !kami_key.is_empty() {
+                cmd.arg("-k").arg(kami_key);
+            }
         }
 
         info!("  ├─ Executing: {:?}", cmd);
@@ -1329,6 +1486,13 @@ impl Service {
             }
         }
 
+        // 卡密参数
+        if let Some(kami_key) = params.get("kamiKey").and_then(|k| k.as_str()) {
+            if !kami_key.is_empty() {
+                cmd.arg("-k").arg(kami_key);
+            }
+        }
+
         info!("  ├─ Executing filter command");
 
         // 发送开始消息
@@ -1473,7 +1637,7 @@ async fn handle_connection(
             "message": "Welcome to FScan Service",
             "version": "2.0.0",
             "features": ["heartbeat", "command"],
-            "commands": ["ping", "status", "login", "get_apps", "get_app_info", "get_modules", "get_next_file", "start_scan"]
+            "commands": ["ping", "status", "login", "kami_info", "get_apps", "get_app_info", "get_modules", "get_next_file", "start_scan", "compare", "compare_norm", "to_out", "filter_run", "convert_format"]
         }),
     );
     info!("[{}] → Sending welcome message", addr);

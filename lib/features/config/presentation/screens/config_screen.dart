@@ -9,7 +9,7 @@ import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/network/ws_service.dart';
 import 'package:fscan/core/utils/logger.dart';
 import 'package:fscan/core/utils/cache_utils.dart';
-import 'package:fscan/core/services/user_service.dart';
+import 'package:fscan/core/services/kami_service.dart';
 
 /// 配置页面 - MD3 风格
 class ConfigScreen extends StatefulWidget {
@@ -140,16 +140,16 @@ class _ConfigScreenState extends State<ConfigScreen> {
     );
   }
 
-  /// 用户头像按钮
+  /// 用户头像按钮（卡密授权）
   Widget _buildUserAvatar(BuildContext context) {
-    return Consumer<UserService>(
-      builder: (context, userService, child) {
+    return Consumer<KamiService>(
+      builder: (context, kamiService, child) {
         return GestureDetector(
-          onTap: () => _showLoginDialog(context, userService),
+          onTap: () => _showKamiDialog(context, kamiService),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: userService.isLoggedIn
-                ? _buildLoggedInAvatar(context, userService)
+            child: kamiService.isAuthorized
+                ? _buildAuthorizedAvatar(context, kamiService)
                 : _buildDefaultAvatar(context),
           ),
         );
@@ -157,27 +157,13 @@ class _ConfigScreenState extends State<ConfigScreen> {
     );
   }
 
-  /// 已登录头像
-  Widget _buildLoggedInAvatar(BuildContext context, UserService userService) {
-    final userInfo = userService.userInfo!;
+  /// 已授权头像
+  Widget _buildAuthorizedAvatar(BuildContext context, KamiService kamiService) {
     final themeProvider = Provider.of<ThemeProvider>(context);
 
-    // 判断是否显示QQ头像
-    if (userInfo.isQQEmail) {
-      return CircleAvatar(
-        radius: 16,
-        backgroundImage: NetworkImage(userInfo.qqAvatarUrl!),
-        onBackgroundImageError: (_, __) {
-          // 加载失败时显示默认头像
-        },
-        child: null,
-      );
-    }
-
-    // 显示昵称首字
-    final firstChar = (userInfo.nickname ?? userInfo.account).isNotEmpty
-        ? (userInfo.nickname ?? userInfo.account)[0]
-        : '?';
+    // 显示卡密首字符
+    final key = kamiService.kamiKey ?? '';
+    final firstChar = key.isNotEmpty ? key[0].toUpperCase() : '?';
 
     return CircleAvatar(
       radius: 16,
@@ -192,29 +178,28 @@ class _ConfigScreenState extends State<ConfigScreen> {
     );
   }
 
-  /// 默认头像（未登录）
+  /// 默认头像（未授权）
   Widget _buildDefaultAvatar(BuildContext context) {
     return const CircleAvatar(
       radius: 16,
       backgroundColor: Colors.grey,
       child: Icon(
-        Icons.person,
+        Icons.vpn_key,
         color: Colors.white,
-        size: 20,
+        size: 18,
       ),
     );
   }
 
-  /// 登录弹窗
-  void _showLoginDialog(BuildContext context, UserService userService) {
-    if (userService.isLoggedIn) {
-      // 已登录，显示用户信息
-      _showUserInfoDialog(context, userService);
+  /// 卡密授权弹窗
+  void _showKamiDialog(BuildContext context, KamiService kamiService) {
+    if (kamiService.isAuthorized) {
+      // 已授权，显示卡密信息
+      _showKamiInfoDialog(context, kamiService);
       return;
     }
 
-    final accountController = TextEditingController();
-    final passwordController = TextEditingController();
+    final kamiKeyController = TextEditingController();
     bool isLoading = false;
 
     showDialog(
@@ -223,30 +208,29 @@ class _ConfigScreenState extends State<ConfigScreen> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('用户登录'),
+              title: const Text('卡密授权'),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   TextField(
-                    controller: accountController,
+                    controller: kamiKeyController,
                     decoration: const InputDecoration(
-                      labelText: '账号',
-                      hintText: '请输入账号',
+                      labelText: '卡密密钥',
+                      hintText: '请输入卡密密钥',
                       border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.person),
+                      prefixIcon: Icon(Icons.vpn_key),
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: passwordController,
-                    obscureText: true,
-                    decoration: const InputDecoration(
-                      labelText: '密码',
-                      hintText: '请输入密码',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.lock),
+                  if (kamiService.errorMessage != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      kamiService.errorMessage!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontSize: 12,
+                      ),
                     ),
-                  ),
+                  ],
                   if (isLoading) ...[
                     const SizedBox(height: 16),
                     const CircularProgressIndicator(),
@@ -262,17 +246,16 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   onPressed: isLoading
                       ? null
                       : () async {
-                          if (accountController.text.isEmpty ||
-                              passwordController.text.isEmpty) {
+                          if (kamiKeyController.text.isEmpty) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('请输入账号和密码')),
+                              const SnackBar(content: Text('请输入卡密密钥')),
                             );
                             return;
                           }
 
                           setDialogState(() => isLoading = true);
 
-                          // 生成密钥并加密密码
+                          // 查询卡密状态
                           final wsService = context.read<WsService>();
                           if (!wsService.isConnected) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -282,56 +265,43 @@ class _ConfigScreenState extends State<ConfigScreen> {
                             return;
                           }
 
-                          // 登录
-                          final success = await userService.login(
-                            accountController.text,
-                            passwordController.text,
+                          final response = await wsService.getKamiInfo(
+                            kamiKeyController.text.trim(),
                           );
 
-                          if (success) {
-                            // 发送登录请求到服务器
-                            final response = await wsService.sendLogin(
-                              accountController.text,
-                              passwordController.text,
+                          if (response != null && response['success'] == true) {
+                            // 保存卡密信息
+                            final kamiInfo = KamiInfo.fromJson(response);
+                            await kamiService.saveKamiInfo(
+                              kamiKeyController.text.trim(),
+                              kamiInfo,
                             );
 
-                            if (response != null && response.data != null) {
-                              final data = response.data as Map<String, dynamic>;
-                              if (data['success'] == true) {
-                                // 保存用户信息
-                                final userInfo = UserInfo.fromJson(data);
-                                await userService.saveLoginInfo(
-                                  userInfo,
-                                  passwordController.text,
+                            if (dialogContext.mounted) {
+                              Navigator.pop(dialogContext);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('授权成功'),
+                                    backgroundColor: Colors.green,
+                                  ),
                                 );
-
-                                if (dialogContext.mounted) {
-                                  Navigator.pop(dialogContext);
-                                  if (context.mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('登录成功'),
-                                        backgroundColor: Colors.green,
-                                      ),
-                                    );
-                                  }
-                                }
-                              } else {
-                                if (context.mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      content: Text(data['message'] ?? '登录失败'),
-                                      backgroundColor: Colors.red,
-                                    ),
-                                  );
-                                }
                               }
+                            }
+                          } else {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(response?['message'] ?? '卡密无效或已过期'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
                             }
                           }
 
                           setDialogState(() => isLoading = false);
                         },
-                  child: const Text('登录'),
+                  child: const Text('授权'),
                 ),
               ],
             );
@@ -341,69 +311,67 @@ class _ConfigScreenState extends State<ConfigScreen> {
     );
   }
 
-  /// 用户信息弹窗
-  void _showUserInfoDialog(BuildContext context, UserService userService) {
-    final userInfo = userService.userInfo!;
+  /// 卡密信息弹窗
+  void _showKamiInfoDialog(BuildContext context, KamiService kamiService) {
+    final kamiInfo = kamiService.kamiInfo;
 
     showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
-          title: const Text('用户信息'),
+          title: const Text('卡密信息'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 头像和昵称
+              // 卡密图标
               Center(
                 child: Column(
                   children: [
-                    if (userInfo.isQQEmail)
-                      CircleAvatar(
-                        radius: 32,
-                        backgroundImage: NetworkImage(userInfo.qqAvatarUrl!),
-                      )
-                    else
-                      CircleAvatar(
-                        radius: 32,
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        child: Text(
-                          (userInfo.nickname ?? userInfo.account)[0],
-                          style: const TextStyle(
-                            fontSize: 24,
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                    CircleAvatar(
+                      radius: 32,
+                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      child: const Icon(
+                        Icons.vpn_key,
+                        size: 32,
+                        color: Colors.white,
                       ),
+                    ),
                     const SizedBox(height: 8),
                     Text(
-                      userInfo.nickname ?? userInfo.account,
-                      style: Theme.of(context).textTheme.titleMedium,
+                      kamiService.kamiKey ?? '',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontFamily: 'monospace',
+                      ),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 16),
-              _buildInfoRow('账号', userInfo.account),
-              _buildInfoRow('邮箱', userInfo.email),
-              _buildInfoRow(
-                '到期时间',
-                '${userInfo.expireTime.year}-${userInfo.expireTime.month.toString().padLeft(2, '0')}-${userInfo.expireTime.day.toString().padLeft(2, '0')}',
-              ),
+              if (kamiInfo != null) ...[
+                _buildInfoRow('卡密类型', kamiInfo.cardType),
+                _buildInfoRow('到期时间', kamiInfo.formattedEndTime),
+                _buildInfoRow('可用次数', '${kamiInfo.available}'),
+                _buildInfoRow('绑定数量', '${kamiInfo.bindNumber}'),
+                _buildInfoRow('未绑数量', '${kamiInfo.unbindNumber}'),
+              ] else ...[
+                const Center(
+                  child: Text('暂无卡密详情', style: TextStyle(color: Colors.grey)),
+                ),
+              ],
             ],
           ),
           actions: [
             FilledButton(
-              onPressed: () {
-                userService.logout();
+              onPressed: () async {
+                await kamiService.clearKamiInfo();
                 Navigator.pop(context);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('已退出登录')),
+                  const SnackBar(content: Text('已取消授权')),
                 );
               },
               style: FilledButton.styleFrom(backgroundColor: Colors.red),
-              child: const Text('退出登录'),
+              child: const Text('取消授权'),
             ),
             TextButton(
               onPressed: () => Navigator.pop(context),

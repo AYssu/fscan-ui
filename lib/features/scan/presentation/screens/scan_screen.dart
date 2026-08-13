@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
 import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/services/module_service.dart';
+import 'package:fscan/core/services/kami_service.dart';
 import 'package:fscan/core/network/ws_service.dart';
 import 'package:fscan/core/utils/logger.dart';
 import 'package:fscan/shared/widgets/terminal_panel.dart';
@@ -1505,6 +1506,7 @@ class _ScanScreenState extends State<ScanScreen> {
 
     final appConfig = context.read<AppConfig>();
     final wsService = context.read<WsService>();
+    final kamiService = context.read<KamiService>();
 
     // 检查WebSocket连接
     if (!wsService.isConnected) {
@@ -1546,6 +1548,7 @@ class _ScanScreenState extends State<ScanScreen> {
       brutalMode: isBrutalMode,
       pageFault: handlePageFault,
       handleB4000000: handleB4000000,
+      kamiKey: kamiService.kamiKey,
     );
 
     if (taskId != null && mounted) {

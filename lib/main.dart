@@ -8,7 +8,7 @@ import 'package:fscan/core/theme/background_provider.dart';
 import 'package:fscan/core/config/app_config.dart';
 import 'package:fscan/core/network/ws_service.dart';
 import 'package:fscan/core/utils/logger.dart';
-import 'package:fscan/core/services/user_service.dart';
+import 'package:fscan/core/services/kami_service.dart';
 import 'package:fscan/routing/app_router.dart';
 
 /// 应用入口
@@ -24,8 +24,8 @@ void main() async {
   final backgroundProvider = BackgroundProvider();
   await backgroundProvider.init();
 
-  final userService = UserService();
-  await userService.init();
+  final kamiService = KamiService();
+  await kamiService.init();
 
   final wsService = WsService();
   await wsService.init();
@@ -35,18 +35,18 @@ void main() async {
 
   logger.info('App', '应用启动完成');
 
-  runApp(MyApp(themeProvider: themeProvider, backgroundProvider: backgroundProvider, userService: userService, wsService: wsService, appConfig: appConfig));
+  runApp(MyApp(themeProvider: themeProvider, backgroundProvider: backgroundProvider, kamiService: kamiService, wsService: wsService, appConfig: appConfig));
 }
 
 /// 应用根组件
 class MyApp extends StatelessWidget {
   final ThemeProvider themeProvider;
   final BackgroundProvider backgroundProvider;
-  final UserService userService;
+  final KamiService kamiService;
   final WsService wsService;
   final AppConfig appConfig;
 
-  const MyApp({super.key, required this.themeProvider, required this.backgroundProvider, required this.userService, required this.wsService, required this.appConfig});
+  const MyApp({super.key, required this.themeProvider, required this.backgroundProvider, required this.kamiService, required this.wsService, required this.appConfig});
 
   @override
   Widget build(BuildContext context) {
@@ -56,7 +56,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: backgroundProvider),
         ChangeNotifierProvider.value(value: appConfig),
         ChangeNotifierProvider.value(value: wsService),
-        ChangeNotifierProvider.value(value: userService),
+        ChangeNotifierProvider.value(value: kamiService),
         ChangeNotifierProvider.value(value: logger),
       ],
       child: ScreenUtilInit(

@@ -242,7 +242,55 @@ class WsService extends ChangeNotifier {
     return completer.future;
   }
 
+  /// 查询卡密状态
+  Future<Map<String, dynamic>?> getKamiInfo(String kamiKey) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法查询卡密状态');
+      return null;
+    }
+
+    final completer = Completer<Map<String, dynamic>?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _kamiInfoRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          final data = message.data as Map<String, dynamic>;
+          completer.complete(data);
+        } else {
+          completer.complete(null);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _kamiInfoRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'kami_info',
+        'params': {
+          'kamiKey': kamiKey,
+        },
+      },
+      id: _kamiInfoRequestId,
+    ));
+
+    // 超时处理
+    Timer(const Duration(seconds: 15), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
   String? _loginRequestId;
+  String? _kamiInfoRequestId;
   String? _getAppsRequestId;
   String? _getAppInfoRequestId;
   String? _getNextFileRequestId;
@@ -256,6 +304,7 @@ class WsService extends ChangeNotifier {
   String? _debugPointersRequestId;
   String? _compareRequestId;
   String? _compareNormRequestId;
+  String? _toOutRequestId;
   String? _checkFileExistsRequestId;
   String? _filterListTargetsRequestId;
   String? _filterRunRequestId;
@@ -481,6 +530,7 @@ class WsService extends ChangeNotifier {
     required bool handleB4000000,
     String? reader,
     String? normFile,
+    String? kamiKey,
   }) async {
     if (!isConnected) {
       logger.warning('WebSocket', '未连接，无法启动扫描');
@@ -520,6 +570,11 @@ class WsService extends ChangeNotifier {
       'brutalMode': brutalMode,
       'handleB4000000': handleB4000000,
     };
+
+    // 添加卡密参数
+    if (kamiKey != null && kamiKey.isNotEmpty) {
+      params['kamiKey'] = kamiKey;
+    }
 
     // 根据数据格式选择输出参数
     // 通用格式(brutalMode=false): 使用 -f 参数 (outputFile)
@@ -737,6 +792,7 @@ class WsService extends ChangeNotifier {
     bool folder = false,
     int? levelMin,
     int? levelMax,
+    String? kamiKey,
   }) async {
     if (!isConnected) {
       logger.warning('WebSocket', '未连接，无法转换格式文件');
@@ -782,6 +838,11 @@ class WsService extends ChangeNotifier {
       params['levelMax'] = levelMax;
     }
 
+    // 添加卡密参数
+    if (kamiKey != null && kamiKey.isNotEmpty) {
+      params['kamiKey'] = kamiKey;
+    }
+
     send(WsMessage(
       type: WsMessageType.command,
       data: {
@@ -793,6 +854,67 @@ class WsService extends ChangeNotifier {
 
     // 超时处理（转换可能需要较长时间）
     Timer(const Duration(seconds: 60), () {
+      if (!completer.isCompleted) {
+        completer.complete(null);
+        subscription.cancel();
+      }
+    });
+
+    return completer.future;
+  }
+
+  /// norm 转 out（同步返回结果）
+  Future<Map<String, dynamic>?> toOut({
+    required List<String> inputFiles,
+    String? outputFile,
+    String? kamiKey,
+  }) async {
+    if (!isConnected) {
+      logger.warning('WebSocket', '未连接，无法执行 norm 转 out');
+      return null;
+    }
+
+    final completer = Completer<Map<String, dynamic>?>();
+
+    // 监听响应
+    late StreamSubscription subscription;
+    subscription = messageStream.listen((message) {
+      if (message.id == _toOutRequestId) {
+        if (message.type == WsMessageType.response && message.data != null) {
+          completer.complete(message.data as Map<String, dynamic>);
+        } else {
+          completer.complete(null);
+        }
+        subscription.cancel();
+      }
+    });
+
+    _toOutRequestId = DateTime.now().millisecondsSinceEpoch.toString();
+
+    final Map<String, dynamic> params = {
+      'inputFiles': inputFiles,
+    };
+
+    if (outputFile != null) {
+      params['outputFile'] = outputFile;
+    }
+
+    // 添加卡密参数
+    if (kamiKey != null && kamiKey.isNotEmpty) {
+      params['kamiKey'] = kamiKey;
+    }
+
+    send(WsMessage(
+      type: WsMessageType.command,
+      data: {
+        'command': 'to_out',
+        'params': params,
+      },
+      id: _toOutRequestId,
+    ));
+
+    // 超时处理（10秒，因为是快速操作）
+    Timer(const Duration(seconds: 10), () {
       if (!completer.isCompleted) {
         completer.complete(null);
         subscription.cancel();
@@ -920,6 +1042,7 @@ class WsService extends ChangeNotifier {
     int? limit,
     int? levelMin,
     int? levelMax,
+    String? kamiKey,
   }) async {
     if (!isConnected) {
       logger.warning('WebSocket', '未连接，无法执行对比');
@@ -970,6 +1093,11 @@ class WsService extends ChangeNotifier {
       params['levelMax'] = levelMax;
     }
 
+    // 添加卡密参数
+    if (kamiKey != null && kamiKey.isNotEmpty) {
+      params['kamiKey'] = kamiKey;
+    }
+
     send(WsMessage(
       type: WsMessageType.command,
       data: {
@@ -996,6 +1124,7 @@ class WsService extends ChangeNotifier {
     String? outputFile,
     int? minLevel,
     int? maxLevel,
+    String? kamiKey,
   }) async {
     if (!isConnected) {
       logger.warning('WebSocket', '未连接，无法执行暴力对比');
@@ -1038,6 +1167,11 @@ class WsService extends ChangeNotifier {
 
     if (maxLevel != null) {
       params['maxLevel'] = maxLevel;
+    }
+
+    // 添加卡密参数
+    if (kamiKey != null && kamiKey.isNotEmpty) {
+      params['kamiKey'] = kamiKey;
     }
 
     send(WsMessage(
@@ -1114,6 +1248,7 @@ class WsService extends ChangeNotifier {
     required bool is32Bit,
     required int pid,
     int valueType = 0,
+    String? kamiKey,
   }) async {
     if (!isConnected) {
       logger.warning('WebSocket', '未连接，无法列出过滤目标');
@@ -1138,17 +1273,24 @@ class WsService extends ChangeNotifier {
 
     _filterListTargetsRequestId = DateTime.now().millisecondsSinceEpoch.toString();
 
+    final params = {
+      'input': inputFile,
+      'mode': mode,
+      'bit': is32Bit ? 32 : 64,
+      'valueType': valueType,
+      'pid': pid,
+    };
+
+    // 添加卡密参数
+    if (kamiKey != null && kamiKey.isNotEmpty) {
+      params['kamiKey'] = kamiKey;
+    }
+
     send(WsMessage(
       type: WsMessageType.command,
       data: {
         'command': 'filter_list_targets',
-        'params': {
-          'input': inputFile,
-          'mode': mode,
-          'bit': is32Bit ? 32 : 64,
-          'valueType': valueType,
-          'pid': pid,
-        },
+        'params': params,
       },
       id: _filterListTargetsRequestId,
     ));
@@ -1174,6 +1316,7 @@ class WsService extends ChangeNotifier {
     required int pid,
     required String outputMode, // bin 或 text
     String reader = '',
+    String? kamiKey,
   }) async {
     if (!isConnected) {
       logger.warning('WebSocket', '未连接，无法执行过滤');
@@ -1215,6 +1358,11 @@ class WsService extends ChangeNotifier {
     // 添加 reader 参数（如果指定）
     if (reader.isNotEmpty) {
       params['reader'] = reader;
+    }
+
+    // 添加卡密参数
+    if (kamiKey != null && kamiKey.isNotEmpty) {
+      params['kamiKey'] = kamiKey;
     }
 
     send(WsMessage(

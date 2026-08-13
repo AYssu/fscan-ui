@@ -254,12 +254,13 @@ pub fn filter_list_targets(
     bit: i32,
     value_type: i32,
     pid: i32,
+    kami_key: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let binary = get_scan_binary();
     info!("  Executing: {} filter -i {} -m {} -b {} --pid {} --list --value-type {}", binary, input_file, mode, bit, pid, value_type);
 
-    let output = Command::new(&binary)
-        .arg("filter")
+    let mut cmd = Command::new(&binary);
+    cmd.arg("filter")
         .arg("-i")
         .arg(input_file)
         .arg("-m")
@@ -270,8 +271,16 @@ pub fn filter_list_targets(
         .arg(pid.to_string())
         .arg("--list")
         .arg("--value-type")
-        .arg(value_type.to_string())
-        .output()
+        .arg(value_type.to_string());
+
+    // 添加卡密参数
+    if let Some(key) = kami_key {
+        if !key.is_empty() {
+            cmd.arg("-k").arg(key);
+        }
+    }
+
+    let output = cmd.output()
         .map_err(|e| format!("Failed to execute {}: {}", binary, e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();

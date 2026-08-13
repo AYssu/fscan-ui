@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fscan/core/config/app_config.dart';
+import 'package:fscan/core/services/kami_service.dart';
 import 'package:fscan/core/network/ws_service.dart';
 import 'package:fscan/core/utils/logger.dart';
 import 'package:fscan/shared/widgets/terminal_panel.dart';
@@ -1124,32 +1126,47 @@ class _CompareScreenState extends State<CompareScreen> {
                                     final file = filteredFiles[index];
                                     final isSelected = tempSelected.any((f) => f.path == file.path);
                                     final canSelect = tempSelected.length < maxFileCount || isSelected;
+                                    final isNormFile = file.extension.toLowerCase() == 'norm';
 
-                                    return CheckboxListTile(
-                                      value: isSelected,
-                                      onChanged: canSelect
-                                          ? (selected) {
-                                              setDialog(() {
-                                                if (selected == true) {
-                                                  tempSelected.add(file);
-                                                } else {
-                                                  tempSelected.removeWhere((f) => f.path == file.path);
-                                                }
-                                              });
-                                            }
-                                          : null,
+                                    return ListTile(
+                                      leading: Checkbox(
+                                        value: isSelected,
+                                        onChanged: canSelect
+                                            ? (selected) {
+                                                setDialog(() {
+                                                  if (selected == true) {
+                                                    tempSelected.add(file);
+                                                  } else {
+                                                    tempSelected.removeWhere((f) => f.path == file.path);
+                                                  }
+                                                });
+                                              }
+                                            : null,
+                                      ),
                                       title: Text(file.name, style: const TextStyle(fontFamily: 'monospace')),
                                       subtitle: Text(file.arch != null
                                           ? '${file.arch} | ${file.sizeText} | ${file.modified}'
                                           : '${file.sizeText} | ${file.modified}'),
-                                      secondary: CircleAvatar(
-                                        backgroundColor: Theme.of(context).colorScheme.primary,
-                                        radius: 12,
-                                        child: Text(
-                                          file.extension.toUpperCase(),
-                                          style: const TextStyle(fontSize: 10, color: Colors.white),
-                                        ),
-                                      ),
+                                      trailing: isNormFile
+                                          ? IconButton(
+                                              icon: Icon(
+                                                Icons.transform,
+                                                size: 20,
+                                                color: Theme.of(context).colorScheme.tertiary,
+                                              ),
+                                              tooltip: '转换为 .out',
+                                              onPressed: () async {
+                                                await _convertNormToOut(file, setDialog);
+                                              },
+                                            )
+                                          : CircleAvatar(
+                                              backgroundColor: Theme.of(context).colorScheme.primary,
+                                              radius: 12,
+                                              child: Text(
+                                                file.extension.toUpperCase(),
+                                                style: const TextStyle(fontSize: 10, color: Colors.white),
+                                              ),
+                                            ),
                                     );
                                   },
                                 ),
@@ -1216,6 +1233,165 @@ class _CompareScreenState extends State<CompareScreen> {
     }
   }
 
+  /// 将 .norm 文件转换为 .out 文件
+  Future<void> _convertNormToOut(CompareFile file, StateSetter? setDialog) async {
+    if (!mounted) return;
+
+    final wsService = context.read<WsService>();
+    final kamiService = context.read<KamiService>();
+
+    // 显示确认弹窗
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(Icons.transform, color: Theme.of(context).colorScheme.primary),
+        title: const Text('转换为 .out'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('将以下文件转换为 .out 格式：'),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                file.name,
+                style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w500),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '转换后的文件将保存在同一目录下',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('开始转换'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // 自动生成输出路径：将 .norm 替换为 .out
+    final inputPath = file.path;
+    final outputPath = inputPath.replaceAll('.norm', '.out');
+
+    // 显示加载中
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 12),
+              Text('正在转换 ${file.name}...'),
+            ],
+          ),
+          duration: const Duration(seconds: 30),
+        ),
+      );
+    }
+
+    try {
+      final result = await wsService.toOut(
+        inputFiles: [file.path],
+        outputFile: outputPath,
+        kamiKey: kamiService.kamiKey,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+        if (result != null && result['success'] == true) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✓ ${file.name} 转换成功'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+
+          // 刷新文件列表
+          _refreshFileList(setDialog);
+        } else {
+          final errorMsg = result?['stderr'] ?? result?['error'] ?? '未知错误';
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('✗ 转换失败: $errorMsg'),
+              backgroundColor: Colors.red,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('转换失败: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  /// 刷新文件列表
+  Future<void> _refreshFileList(StateSetter? setDialog) async {
+    try {
+      final wsService = context.read<WsService>();
+      final appConfig = context.read<AppConfig>();
+
+      String dir = appConfig.dataPath;
+      if (appConfig.selectedPackageName != null) {
+        dir = '$dir/${appConfig.selectedPackageName}';
+      }
+
+      List<String> extensions;
+      switch (compareMode) {
+        case CompareMode.basic:
+        case CompareMode.fast:
+          extensions = ['out'];
+          break;
+        case CompareMode.brutal:
+          extensions = ['norm'];
+          break;
+      }
+
+      final files = await wsService.getFiles(dir, extensions);
+      if (files != null && mounted) {
+        setState(() {
+          availableFiles = files.map((f) => CompareFile.fromJson(f)).toList();
+        });
+
+        // 更新弹窗状态
+        if (setDialog != null) {
+          setDialog(() {});
+        }
+      }
+    } catch (e) {
+      logger.error('CompareScreen', '刷新文件列表失败', e);
+    }
+  }
+
   /// 开始对比
   Future<void> startCompare() async {
     // 验证文件数量
@@ -1242,6 +1418,7 @@ class _CompareScreenState extends State<CompareScreen> {
 
     // 检查输出路径是否已存在
     final wsService = context.read<WsService>();
+    final kamiService = context.read<KamiService>();
     final fileExists = await wsService.checkFileExists(outputPath);
     if (fileExists && mounted) {
       final shouldRefresh = await showDialog<bool>(
@@ -1301,6 +1478,7 @@ class _CompareScreenState extends State<CompareScreen> {
           outputFile: outputPath,
           minLevel: levelMin,
           maxLevel: levelMax,
+          kamiKey: kamiService.kamiKey,
         );
       } else {
         // 基础对比/极速对比 - 使用 compare 命令
@@ -1313,6 +1491,7 @@ class _CompareScreenState extends State<CompareScreen> {
           limit: limit,
           levelMin: levelMin,
           levelMax: levelMax,
+          kamiKey: kamiService.kamiKey,
         );
       }
 

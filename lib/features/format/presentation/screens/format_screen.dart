@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fscan/core/config/app_config.dart';
+import 'package:fscan/core/services/kami_service.dart';
 import 'package:fscan/core/network/ws_service.dart';
 import 'package:fscan/shared/widgets/terminal_panel.dart';
 
@@ -805,6 +806,7 @@ class _FormatScreenState extends State<FormatScreen> {
     if (!mounted) return;
 
     final wsService = context.read<WsService>();
+    final kamiService = context.read<KamiService>();
 
     // 启动格式转换
     final taskId = await wsService.convertFormatFile(
@@ -815,6 +817,7 @@ class _FormatScreenState extends State<FormatScreen> {
       levelMin: levelMin,
       levelMax: levelMax,
       outputPath: outputPath.isNotEmpty ? outputPath : null,
+      kamiKey: kamiService.kamiKey,
     );
 
     if (taskId != null && mounted) {
