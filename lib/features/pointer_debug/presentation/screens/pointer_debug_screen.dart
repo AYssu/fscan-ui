@@ -1,30 +1,44 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fscan/core/network/ws_service.dart';
+import 'package:fscan/core/config/app_config.dart';
+import 'package:fscan/core/services/kami_service.dart';
 
 /// 指针调试结果
 class PointerDebugResult {
   final String input;
+  final bool success;
   final String? error;
-  final String? dword;
-  final String? floatValue;
-  final List<String> traceSteps;
+  final String? base;
+  final String? finalAddress;
+  final dynamic qword;
+  final dynamic dword;
+  final dynamic floatValue;
+  final List<Map<String, dynamic>> chain;
 
   PointerDebugResult({
     required this.input,
+    required this.success,
     this.error,
+    this.base,
+    this.finalAddress,
+    this.qword,
     this.dword,
     this.floatValue,
-    this.traceSteps = const [],
+    this.chain = const [],
   });
 
   factory PointerDebugResult.fromJson(Map<String, dynamic> json) {
     return PointerDebugResult(
       input: json['input'] ?? '',
+      success: json['success'] ?? false,
       error: json['error'],
+      base: json['base']?.toString(),
+      finalAddress: json['finalAddress'],
+      qword: json['qword'],
       dword: json['dword'],
       floatValue: json['float'],
-      traceSteps: (json['trace'] as List?)?.map((e) => e.toString()).toList() ?? [],
+      chain: (json['chain'] as List?)?.map((e) => e as Map<String, dynamic>).toList() ?? [],
     );
   }
 }
@@ -81,11 +95,32 @@ class _PointerDebugScreenState extends State<PointerDebugScreen> {
 
     try {
       final wsService = context.read<WsService>();
-      final debugResults = await wsService.debugPointers(lines);
+      final appConfig = context.read<AppConfig>();
+      final kamiService = context.read<KamiService>();
 
-      if (debugResults != null && mounted) {
+      // 确定 reader 类型
+      String readerType = '';
+      switch (appConfig.rwMethod) {
+        case 0: readerType = 'syscall'; break;
+        case 1: readerType = 'pread'; break;
+        case 2: readerType = appConfig.libPath; break;
+      }
+
+      final response = await wsService.debugPointers(
+        packageName: appConfig.selectedPackageName,
+        pid: appConfig.selectedPid,
+        bit: 64,
+        chains: lines,
+        reader: readerType.isEmpty ? null : readerType,
+        kamiKey: kamiService.kamiKey,
+      );
+
+      if (response != null && response['success'] == true && response['results'] != null && mounted) {
+        final resList = (response['results'] as List)
+            .map((r) => PointerDebugResult.fromJson(r as Map<String, dynamic>))
+            .toList();
         setState(() {
-          results = debugResults.map((r) => PointerDebugResult.fromJson(r)).toList();
+          results = resList;
           _isDebugging = false;
         });
       } else if (mounted) {
@@ -270,11 +305,11 @@ class _PointerDebugScreenState extends State<PointerDebugScreen> {
                       Row(
                         children: [
                           Icon(
-                            result.error != null ? Icons.error : Icons.check_circle,
+                            result.success ? Icons.check_circle : Icons.error,
                             size: 16,
-                            color: result.error != null
-                                ? Theme.of(context).colorScheme.error
-                                : Theme.of(context).colorScheme.primary,
+                            color: result.success
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).colorScheme.error,
                           ),
                           const SizedBox(width: 8),
                           Expanded(
@@ -297,7 +332,7 @@ class _PointerDebugScreenState extends State<PointerDebugScreen> {
                       ),
                       const SizedBox(height: 8),
                       // 最终结果
-                      if (result.error != null)
+                      if (!result.success)
                         Text(
                           '错误: ${result.error}',
                           style: TextStyle(
@@ -306,11 +341,22 @@ class _PointerDebugScreenState extends State<PointerDebugScreen> {
                           ),
                         )
                       else
-                        Row(
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
                           children: [
-                            _buildResultChip('dword', result.dword ?? '-'),
-                            const SizedBox(width: 8),
-                            _buildResultChip('float', result.floatValue ?? '-'),
+                            if (result.base != null)
+                              _buildResultChip('base', result.base!),
+                            if (result.finalAddress != null)
+                              _buildResultChip('address', result.finalAddress!),
+                            if (result.qword != null)
+                              _buildResultChip('qword', '${result.qword}')
+                            else ...[
+                              if (result.dword != null)
+                                _buildResultChip('dword', '${result.dword}'),
+                            ],
+                            if (result.floatValue != null)
+                              _buildResultChip('float', '${result.floatValue}'),
                           ],
                         ),
                     ],
@@ -319,7 +365,7 @@ class _PointerDebugScreenState extends State<PointerDebugScreen> {
               ),
 
               // 展开的详细路径
-              if (isExpanded && result.traceSteps.isNotEmpty) ...[
+              if (isExpanded && result.chain.isNotEmpty) ...[
                 const Divider(height: 1),
                 Container(
                   width: double.infinity,
@@ -337,10 +383,10 @@ class _PointerDebugScreenState extends State<PointerDebugScreen> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      ...result.traceSteps.asMap().entries.map((entry) {
+                      ...result.chain.asMap().entries.map((entry) {
                         final stepIndex = entry.key;
                         final step = entry.value;
-                        final isLast = stepIndex == result.traceSteps.length - 1;
+                        final isLast = stepIndex == result.chain.length - 1;
 
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 4),
@@ -368,7 +414,7 @@ class _PointerDebugScreenState extends State<PointerDebugScreen> {
                               // 步骤内容
                               Expanded(
                                 child: Text(
-                                  step,
+                                  '${step['addr'] ?? '?'} ${step['offset'] ?? ''} → ${step['read'] ?? '?'}',
                                   style: const TextStyle(
                                     fontFamily: 'monospace',
                                     fontSize: 12,

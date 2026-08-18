@@ -104,6 +104,7 @@ enum CommandHandler {
     FilterListTargets,
     CheckFileExists,
     KamiInfo,
+    Trace,
 }
 
 impl CommandHandler {
@@ -389,6 +390,84 @@ impl CommandHandler {
                     }
                 }
             }
+            Self::Trace => {
+                let package = params
+                    .and_then(|p| p.get("packageName"))
+                    .and_then(|p| p.as_str());
+                let pid = params
+                    .and_then(|p| p.get("pid"))
+                    .and_then(|p| p.as_i64())
+                    .unwrap_or(0) as i32;
+                let bit = params
+                    .and_then(|p| p.get("bit"))
+                    .and_then(|b| b.as_i64())
+                    .unwrap_or(64) as i32;
+                let chains: Vec<String> = params
+                    .and_then(|p| p.get("chains"))
+                    .and_then(|c| c.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .unwrap_or_default();
+                let reader = params
+                    .and_then(|p| p.get("reader"))
+                    .and_then(|r| r.as_str());
+                let kami_key = params
+                    .and_then(|p| p.get("kamiKey"))
+                    .and_then(|k| k.as_str());
+
+                info!("  ├─ Processing: trace chains={} bit={}", chains.len(), bit);
+
+                let binary = handlers::get_scan_binary();
+                let mut cmd = std::process::Command::new(&binary);
+                cmd.arg("trace");
+
+                if let Some(pkg) = package {
+                    if !pkg.is_empty() {
+                        cmd.arg("-p").arg(pkg);
+                    }
+                }
+                if pid > 0 {
+                    cmd.arg("--pid").arg(pid.to_string());
+                }
+                cmd.arg("-b").arg(bit.to_string());
+                for chain in &chains {
+                    cmd.arg("-c").arg(chain);
+                }
+                if let Some(r) = reader {
+                    if !r.is_empty() {
+                        cmd.arg("--reader").arg(r);
+                    }
+                }
+                if let Some(k) = kami_key {
+                    if !k.is_empty() {
+                        cmd.arg("-k").arg(k);
+                    }
+                }
+
+                match cmd.stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .output()
+                {
+                    Ok(output) => {
+                        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                        info!("  ├─ Trace output: {} bytes", stdout.len());
+                        if !stderr.is_empty() {
+                            info!("  ├─ Trace stderr: {}", stderr);
+                        }
+                        match serde_json::from_str::<serde_json::Value>(&stdout) {
+                            Ok(json) => WsMessage::response(id, json),
+                            Err(e) => {
+                                info!("  ├─ Trace parse failed: {}", e);
+                                WsMessage::error(id, &format!("解析trace输出失败: {}", e))
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        info!("  ├─ Trace failed: {}", e);
+                        WsMessage::error(id, &format!("trace执行失败: {}", e))
+                    }
+                }
+            }
             Self::CheckFileExists => {
                 let path = params
                     .and_then(|p| p.get("path"))
@@ -493,6 +572,7 @@ impl Service {
         handlers.insert("filter_list_targets".to_string(), CommandHandler::FilterListTargets);
         handlers.insert("check_file_exists".to_string(), CommandHandler::CheckFileExists);
         handlers.insert("kami_info".to_string(), CommandHandler::KamiInfo);
+        handlers.insert("trace".to_string(), CommandHandler::Trace);
 
         // 创建扫描输出广播通道
         let (scan_output_tx, _) = broadcast::channel(1000);
@@ -758,6 +838,14 @@ impl Service {
             }
         }
 
+        if let Some(modules) = params.get("modules").and_then(|m| m.as_array()) {
+            for module in modules {
+                if let Some(module_str) = module.as_str() {
+                    cmd.arg("-m").arg(module_str);
+                }
+            }
+        }
+
         // 数据格式处理：通用格式用 -f，暴力格式用 --norm
         let is_brutal = params.get("brutalMode").and_then(|b| b.as_bool()).unwrap_or(false);
         if is_brutal {
@@ -778,9 +866,27 @@ impl Service {
             }
         }
 
-        if let Some(handle_b4) = params.get("handleB4000000").and_then(|b| b.as_bool()) {
-            if handle_b4 {
-                cmd.arg("--handle-b4000000");
+        if let Some(byte_filter) = params.get("byteFilter").and_then(|b| b.as_bool()) {
+            if byte_filter {
+                cmd.arg("--byte-filter");
+            }
+        }
+
+        if let Some(align_read) = params.get("alignRead").and_then(|b| b.as_bool()) {
+            if align_read {
+                cmd.arg("--align-read");
+            }
+        }
+
+        if let Some(allow_negative) = params.get("allowNegative").and_then(|b| b.as_bool()) {
+            if allow_negative {
+                cmd.arg("--allow-negative");
+            }
+        }
+
+        if let Some(allow_nonread) = params.get("allowNonread").and_then(|b| b.as_bool()) {
+            if allow_nonread {
+                cmd.arg("--allow-nonread");
             }
         }
 

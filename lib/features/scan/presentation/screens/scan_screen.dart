@@ -21,7 +21,6 @@ class _ScanScreenState extends State<ScanScreen> {
   List<String> searchAddresses = [];
   int scanLevel = 6;
   String scanRange = '0x7D0';
-  bool handleB4000000 = false; // 处理 0xb4000000
   bool handlePageFault = false; // 缺页处理
   bool is32Bit = false;
   bool byteAlignment = false;
@@ -473,35 +472,7 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // 处理 0xb4000000（暂未实现）
-          SwitchListTile(
-            title: Row(
-              children: [
-                const Text('处理 0xb4000000'),
-                const SizedBox(width: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    '暂未实现',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            subtitle: const Text('处理 Android 特殊内存地址'),
-            value: false,
-            onChanged: null,
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-
-          // 4字节对齐（暂未实现）
+          // 4字节对齐
           SwitchListTile(
             title: Row(
               children: [
@@ -510,30 +481,15 @@ class _ScanScreenState extends State<ScanScreen> {
                 _buildHelpIcon('4字节对齐说明', 'GG修改器默认是4字节对齐（地址 % 4 = 0）。\n\n'
                     '但 0x3 这种地址也是存在指针的，不建议开启。\n\n'
                     '大部分指针都是规则的4字节，如果找不到指针时可以尝试开启。'),
-                const SizedBox(width: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    '暂未实现',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
               ],
             ),
             subtitle: Text(byteAlignment ? '开启' : '关闭'),
             value: byteAlignment,
-            onChanged: null,
+            onChanged: (v) => setState(() => byteAlignment = v),
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // 跨页处理（暂未实现）
+          // 跨页处理
           SwitchListTile(
             title: Row(
               children: [
@@ -542,26 +498,11 @@ class _ScanScreenState extends State<ScanScreen> {
                 _buildHelpIcon('跨页处理说明', '由于指针在 4096 字节的内存页边界被截断，导致扫描不出来。\n\n'
                     '默认不推荐开启。\n\n'
                     '场景：你的友人A分享了指针链条，你死活扫不出来这条，其他的可以，大概率是这个问题。'),
-                const SizedBox(width: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    '暂未实现',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
               ],
             ),
             subtitle: Text(pageAlignment ? '开启' : '关闭'),
             value: pageAlignment,
-            onChanged: null,
+            onChanged: (v) => setState(() => pageAlignment = v),
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
@@ -597,7 +538,7 @@ class _ScanScreenState extends State<ScanScreen> {
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
-          // 负偏移（暂未实现）
+          // 负偏移
           SwitchListTile(
             title: Row(
               children: [
@@ -607,26 +548,11 @@ class _ScanScreenState extends State<ScanScreen> {
                     '场景：支持反向查找指针链条\n'
                     '例如：libUE4.so[Cd][1]+0xffff-0x28+0x24-0x4\n\n'
                     '开启后可以搜索负数偏移的指针。'),
-                const SizedBox(width: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    '暂未实现',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
               ],
             ),
             subtitle: Text(negativeOffset ? '开启' : '关闭'),
             value: negativeOffset,
-            onChanged: null,
+            onChanged: (v) => setState(() => negativeOffset = v),
           ),
           const Divider(height: 1, indent: 16, endIndent: 16),
 
@@ -1534,6 +1460,11 @@ class _ScanScreenState extends State<ScanScreen> {
     if (memoryRanges['Bad'] == true) ranges.add('Bad');
     if (memoryRanges['PPSSPP'] == true) ranges.add('PPSSPP');
 
+    // 构建模块过滤参数（-m name[index][type]）
+    final modules = appConfig.selectedModules
+        .map((m) => '${m.name}[${m.index}][${m.type}]')
+        .toList();
+
     // 确定 reader 类型（与过滤/驱动保持一致）
     String readerType = '';
     switch (appConfig.rwMethod) {
@@ -1559,9 +1490,13 @@ class _ScanScreenState extends State<ScanScreen> {
       count: scanCores,
       size: 1 << 20,
       ranges: ranges,
+      modules: modules,
       brutalMode: isBrutalMode,
       pageFault: handlePageFault,
-      handleB4000000: handleB4000000,
+      byteFilter: byteAlignment,
+      alignRead: pageAlignment,
+      allowNegative: negativeOffset,
+      allowNonread: readProtected,
       reader: readerType.isEmpty ? null : readerType,
       kamiKey: kamiService.kamiKey,
     );

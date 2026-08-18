@@ -1394,7 +1394,7 @@ class _FilterScreenState extends State<FilterScreen> {
         }
 
         for (final address in selectedTargetAddresses) {
-          final targetAddress = int.tryParse(address.replaceAll('0x', ''), radix: 16);
+          final targetAddress = int.tryParse(address.replaceFirst(RegExp(r'^0[xX]'), ''), radix: 16);
           if (targetAddress == null) continue;
 
           final taskId = await wsService.filterRun(
@@ -1458,7 +1458,7 @@ class _FilterScreenState extends State<FilterScreen> {
         }
 
         for (final address in selectedTargetAddresses) {
-          final targetAddress = int.tryParse(address.replaceAll('0x', ''), radix: 16);
+          final targetAddress = int.tryParse(address.replaceFirst(RegExp(r'^0[xX]'), ''), radix: 16);
           if (targetAddress == null) continue;
 
           final taskId = await wsService.filterRun(

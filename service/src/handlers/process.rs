@@ -29,6 +29,17 @@ fn default_arch() -> String {
     "unknown".to_string()
 }
 
+/// 从混合输出中提取 JSON 报文：取第一个 `{` 到最后一个 `}` 之间的内容
+/// 用于兼容插件在 JSON 前后打印日志的情况（如驱动加载/关闭提示）
+fn extract_json(raw: &str) -> &str {
+    let start = raw.find('{');
+    let end = raw.rfind('}');
+    match (start, end) {
+        (Some(s), Some(e)) if s < e => &raw[s..=e],
+        _ => raw,
+    }
+}
+
 /// 获取可执行文件路径
 /// 优先查找当前目录下的 scan，然后查找 core-fs/build/scan
 pub fn get_scan_binary() -> String {
@@ -299,9 +310,14 @@ pub fn filter_list_targets(
     }
 
     info!("  Filter list targets output: {} bytes", stdout.len());
+    info!("  Raw output: {}", stdout);
+    if !stderr.is_empty() {
+        info!("  Raw stderr: {}", stderr);
+    }
 
-    // 解析 JSON 响应
-    let result: serde_json::Value = serde_json::from_str(&stdout)
+    // 解析 JSON 响应（兼容插件在 JSON 前后打印日志的情况）
+    let json = extract_json(&stdout);
+    let result: serde_json::Value = serde_json::from_str(json)
         .map_err(|e| format!("Failed to parse JSON: {}", e))?;
 
     Ok(result)

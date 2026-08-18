@@ -525,9 +525,13 @@ class WsService extends ChangeNotifier {
     required int count,
     required int size,
     required List<String> ranges,
+    required List<String> modules,
     required bool brutalMode,
     required bool pageFault,
-    required bool handleB4000000,
+    required bool byteFilter,
+    required bool alignRead,
+    required bool allowNegative,
+    required bool allowNonread,
     String? reader,
     String? normFile,
     String? kamiKey,
@@ -566,9 +570,13 @@ class WsService extends ChangeNotifier {
       'count': count,
       'size': size,
       'ranges': ranges,
+      'modules': modules,
       'pageFault': pageFault,
       'brutalMode': brutalMode,
-      'handleB4000000': handleB4000000,
+      'byteFilter': byteFilter,
+      'alignRead': alignRead,
+      'allowNegative': allowNegative,
+      'allowNonread': allowNonread,
     };
 
     // 添加卡密参数
@@ -980,13 +988,20 @@ class WsService extends ChangeNotifier {
   }
 
   /// 批量调试指针
-  Future<List<Map<String, dynamic>>?> debugPointers(List<String> pointerChains) async {
+  Future<Map<String, dynamic>?> debugPointers({
+    required String? packageName,
+    required int? pid,
+    required int bit,
+    required List<String> chains,
+    String? reader,
+    String? kamiKey,
+  }) async {
     if (!isConnected) {
       logger.warning('WebSocket', '未连接，无法调试指针');
       return null;
     }
 
-    final completer = Completer<List<Map<String, dynamic>>?>();
+    final completer = Completer<Map<String, dynamic>?>();
 
     // 监听响应
     late StreamSubscription subscription;
@@ -994,16 +1009,9 @@ class WsService extends ChangeNotifier {
       if (message.id == _debugPointersRequestId) {
         if (message.type == WsMessageType.response && message.data != null) {
           final data = message.data as Map<String, dynamic>;
-          if (data['success'] == true && data['results'] != null) {
-            final results = (data['results'] as List)
-                .map((e) => e as Map<String, dynamic>)
-                .toList();
-            completer.complete(results);
-          } else {
-            completer.complete([]);
-          }
+          completer.complete(data);
         } else {
-          completer.complete([]);
+          completer.complete(null);
         }
         subscription.cancel();
       }
@@ -1011,13 +1019,20 @@ class WsService extends ChangeNotifier {
 
     _debugPointersRequestId = DateTime.now().millisecondsSinceEpoch.toString();
 
+    final params = <String, dynamic>{
+      'chains': chains,
+      'bit': bit,
+    };
+    if (packageName != null) params['packageName'] = packageName;
+    if (pid != null) params['pid'] = pid;
+    if (reader != null && reader.isNotEmpty) params['reader'] = reader;
+    if (kamiKey != null && kamiKey.isNotEmpty) params['kamiKey'] = kamiKey;
+
     send(WsMessage(
       type: WsMessageType.command,
       data: {
-        'command': 'debug_pointers',
-        'params': {
-          'pointers': pointerChains,
-        },
+        'command': 'trace',
+        'params': params,
       },
       id: _debugPointersRequestId,
     ));
